@@ -5,12 +5,12 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio';
 import {
     CallToolRequestSchema,
     ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+} from '@modelcontextprotocol/sdk/types';
 import { OAuth2Client } from 'google-auth-library';
 import { google } from 'googleapis';
 import open from 'open';
@@ -24,8 +24,8 @@ import {
     getOrCreateLabel,
     listLabels,
     updateLabel,
-} from './label-manager.js';
-import { createEmailMessage, createEmailWithNodemailer } from './utl.js';
+} from './label-manager';
+import { createEmailMessage, createEmailWithNodemailer } from './util';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
