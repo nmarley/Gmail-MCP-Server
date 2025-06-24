@@ -5,12 +5,12 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Server } from '@modelcontextprotocol/sdk/server/index';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
     CallToolRequestSchema,
     ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types';
+} from '@modelcontextprotocol/sdk/types.js';
 import { OAuth2Client } from 'google-auth-library';
 import { google } from 'googleapis';
 import open from 'open';
