@@ -8,6 +8,7 @@
     "gmail-mcp": "./dist/index.js"
   },
   "scripts": {
+    "format": "bun --bun run biome check . --write --unsafe",
     "start": "bun --bun src/index.ts",
     "auth": "bun --bun src/index.ts auth"
   },

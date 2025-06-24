@@ -1,5 +1,5 @@
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import { lookup as mimeLookup } from 'mime-types';
 import nodemailer from 'nodemailer';
 
@@ -11,7 +11,7 @@ function encodeEmailHeader(text: string): string {
     // Only encode if the text contains non-ASCII characters
     if (/[^\x00-\x7F]/.test(text)) {
         // Use MIME Words encoding (RFC 2047)
-        return '=?UTF-8?B?' + Buffer.from(text).toString('base64') + '?=';
+        return `=?UTF-8?B?${Buffer.from(text).toString('base64')}?=`;
     }
     return text;
 }
@@ -25,7 +25,7 @@ export function createEmailMessage(validatedArgs: any): string {
     const encodedSubject = encodeEmailHeader(validatedArgs.subject);
     // Determine content type based on available content and explicit mimeType
     let mimeType = validatedArgs.mimeType || 'text/plain';
-    
+
     // If htmlBody is provided and mimeType isn't explicitly set to text/plain,
     // use multipart/alternative to include both versions
     if (validatedArgs.htmlBody && mimeType !== 'text/plain') {
@@ -36,7 +36,7 @@ export function createEmailMessage(validatedArgs: any): string {
     const boundary = `----=_NextPart_${Math.random().toString(36).substring(2)}`;
 
     // Validate email addresses
-    (validatedArgs.to as string[]).forEach(email => {
+    (validatedArgs.to as string[]).forEach((email) => {
         if (!validateEmail(email)) {
             throw new Error(`Recipient email address is invalid: ${email}`);
         }
@@ -50,7 +50,9 @@ export function createEmailMessage(validatedArgs: any): string {
         validatedArgs.bcc ? `Bcc: ${validatedArgs.bcc.join(', ')}` : '',
         `Subject: ${encodedSubject}`,
         // Add thread-related headers if specified
-        validatedArgs.inReplyTo ? `In-Reply-To: ${validatedArgs.inReplyTo}` : '',
+        validatedArgs.inReplyTo
+            ? `In-Reply-To: ${validatedArgs.inReplyTo}`
+            : '',
         validatedArgs.inReplyTo ? `References: ${validatedArgs.inReplyTo}` : '',
         'MIME-Version: 1.0',
     ].filter(Boolean);
@@ -58,9 +60,11 @@ export function createEmailMessage(validatedArgs: any): string {
     // Construct the email based on the content type
     if (mimeType === 'multipart/alternative') {
         // Multipart email with both plain text and HTML
-        emailParts.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+        emailParts.push(
+            `Content-Type: multipart/alternative; boundary="${boundary}"`,
+        );
         emailParts.push('');
-        
+
         // Plain text part
         emailParts.push(`--${boundary}`);
         emailParts.push('Content-Type: text/plain; charset=UTF-8');
@@ -68,7 +72,7 @@ export function createEmailMessage(validatedArgs: any): string {
         emailParts.push('');
         emailParts.push(validatedArgs.body);
         emailParts.push('');
-        
+
         // HTML part
         emailParts.push(`--${boundary}`);
         emailParts.push('Content-Type: text/html; charset=UTF-8');
@@ -76,7 +80,7 @@ export function createEmailMessage(validatedArgs: any): string {
         emailParts.push('');
         emailParts.push(validatedArgs.htmlBody || validatedArgs.body); // Use body as fallback
         emailParts.push('');
-        
+
         // Close the boundary
         emailParts.push(`--${boundary}--`);
     } else if (mimeType === 'text/html') {
@@ -96,10 +100,11 @@ export function createEmailMessage(validatedArgs: any): string {
     return emailParts.join('\r\n');
 }
 
-
-export async function createEmailWithNodemailer(validatedArgs: any): Promise<string> {
+export async function createEmailWithNodemailer(
+    validatedArgs: any,
+): Promise<string> {
     // Validate email addresses
-    (validatedArgs.to as string[]).forEach(email => {
+    (validatedArgs.to as string[]).forEach((email) => {
         if (!validateEmail(email)) {
             throw new Error(`Recipient email address is invalid: ${email}`);
         }
@@ -109,7 +114,7 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
     const transporter = nodemailer.createTransport({
         streamTransport: true,
         newline: 'unix',
-        buffer: true
+        buffer: true,
     });
 
     // Prepare attachments for nodemailer
@@ -118,12 +123,12 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
         if (!fs.existsSync(filePath)) {
             throw new Error(`File does not exist: ${filePath}`);
         }
-        
+
         const fileName = path.basename(filePath);
-        
+
         attachments.push({
             filename: fileName,
-            path: filePath
+            path: filePath,
         });
     }
 
@@ -137,13 +142,12 @@ export async function createEmailWithNodemailer(validatedArgs: any): Promise<str
         html: validatedArgs.htmlBody,
         attachments: attachments,
         inReplyTo: validatedArgs.inReplyTo,
-        references: validatedArgs.inReplyTo
+        references: validatedArgs.inReplyTo,
     };
 
     // Generate the raw message
     const info = await transporter.sendMail(mailOptions);
     const rawMessage = info.message.toString();
-    
+
     return rawMessage;
 }
-
