@@ -24,7 +24,11 @@
         "useImportType": "off"
       },
       "suspicious": {
+        "noControlCharactersInRegex": "off",
         "noExplicitAny": "off"
+      },
+      "complexity": {
+        "noForEach": "off"
       },
       "a11y": {
         "recommended": false
