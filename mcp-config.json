@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "gmail": {
-      "command": "node",
-      "args": ["D:\\BackDataService\\Gmail-MCP-Server\\dist\\index.js"]
+      "command": "bun",
+      "args": ["/Users/nathan/projects/Gmail-MCP-Server/src/index.ts"]
     }
   }
 }
