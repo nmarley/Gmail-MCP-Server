@@ -1,0 +1,24 @@
+From 475eaa4c44c0e1b1c3bc310bf86b48b3e5989376 Mon Sep 17 00:00:00 2001
+From: GongRzhe <gongrzhe@gmail.com>
+Date: Mon, 30 Jun 2025 14:28:47 +0800
+Subject: [PATCH 5/6] V0.0.5
+
+---
+ package.json | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/package.json b/package.json
+index 0088af7..586851f 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@gongrzhe/server-gmail-mcp",
+-  "version": "0.0.3",
++  "version": "0.0.5",
+   "description": "Gmail MCP server with auto authentication support",
+   "type": "module",
+   "main": "dist/index.js",
+-- 
+2.50.1
+

@@ -1,0 +1,3519 @@
+From 65d8b24bac3ec32ca60b02796e5ead7e55f39f7f Mon Sep 17 00:00:00 2001
+From: GongRzhe <gongrzhe@gmail.com>
+Date: Sat, 28 Jun 2025 23:14:15 +0800
+Subject: [PATCH 1/6] token base
+
+---
+ README.md            |   89 +++
+ TOKEN_AUTH_SYSTEM.md |  237 ++++++
+ package-lock.json    |  877 +++++++++++++++++----
+ package.json         |    6 +-
+ src/index.ts         | 1730 +++++++++++++++++++++++++++++-------------
+ 5 files changed, 2247 insertions(+), 692 deletions(-)
+ create mode 100644 TOKEN_AUTH_SYSTEM.md
+
+diff --git a/README.md b/README.md
+index 3cd91fd..7fe2440 100644
+--- a/README.md
++++ b/README.md
+@@ -27,6 +27,9 @@ A Model Context Protocol (MCP) server for Gmail integration in Claude Desktop wi
+ - Simple OAuth2 authentication flow with auto browser launch
+ - Support for both Desktop and Web application credentials
+ - Global credential storage for convenience
++- **Multiple transport modes**: Stdio, HTTP (Streamable), and SSE
++- **Official MCP SDK integration** with proper protocol compliance
++- **Session management** for HTTP/SSE transports
+ 
+ ## Installation & Authentication
+ 
+@@ -500,6 +503,92 @@ The server includes efficient batch processing capabilities:
+    - **Size Limits**: Gmail has a 25MB attachment size limit per email
+    - **Download Failures**: Verify you have write permissions to the download directory
+ 
++## Transport Modes
++
++The Gmail MCP Server supports multiple transport modes for different integration scenarios:
++
++### 1. Standard Stdio Transport (Default)
++The default transport mode for MCP client integration via stdin/stdout:
++
++```bash
++# Run with default stdio transport
++npm start
++# or
++node dist/index.js
++```
++
++### 2. HTTP Transport (Streamable HTTP)
++Modern MCP Streamable HTTP transport (protocol version 2025-03-26) for web applications and direct integration:
++
++```bash
++# Run with HTTP transport
++npm run start:http
++# or
++node dist/index.js --http
++```
++
++The HTTP server provides the following endpoints:
++
++- **ALL /mcp** - MCP Streamable HTTP endpoint (supports GET, POST, DELETE)
++- **GET /health** - Health check endpoint  
++- **GET /** - API documentation and usage examples
++
++#### Example HTTP Usage:
++
++```bash
++# Initialize a new MCP session
++curl -X POST http://localhost:3000/mcp \
++  -H "Content-Type: application/json" \
++  -H "Accept: application/json, text/event-stream" \
++  -d '{
++    "jsonrpc": "2.0",
++    "id": 1,
++    "method": "initialize",
++    "params": {
++      "protocolVersion": "2024-11-05",
++      "capabilities": {"tools": {}},
++      "clientInfo": {"name": "test-client", "version": "1.0.0"}
++    }
++  }'
++
++# The response will include a session ID for subsequent requests
++# Use the mcp-session-id header for follow-up requests
++
++# Check server health
++curl http://localhost:3000/health
++```
++
++**Note**: This implementation uses the official MCP SDK's `StreamableHTTPServerTransport` for full protocol compliance and session management.
++
++### 3. SSE Transport (Server-Sent Events) 
++Legacy transport mode for backwards compatibility (protocol version 2024-11-05):
++
++```bash
++# Run with SSE transport
++npm run start:sse
++# or
++node dist/index.js --sse
++```
++
++The SSE server provides the following endpoints:
++
++- **GET /sse** - SSE connection endpoint
++- **POST /messages** - Message handling endpoint  
++- **GET /health** - Health check endpoint
++
++**Note**: This implementation uses the official MCP SDK's `SSEServerTransport`. SSE transport is deprecated in favor of Streamable HTTP.
++
++### Transport Configuration
++
++- **Port**: Set the `PORT` environment variable (default: 3000)
++- **CORS**: HTTP transport includes CORS headers for web browser compatibility
++- **Authentication**: All transport modes use the same OAuth2 authentication flow
++
++#### Environment Variables:
++```bash
++PORT=8080 npm run start:http  # Run HTTP transport on port 8080
++```
++
+ ## Contributing
+ 
+ Contributions are welcome! Please feel free to submit a Pull Request.
+diff --git a/TOKEN_AUTH_SYSTEM.md b/TOKEN_AUTH_SYSTEM.md
+new file mode 100644
+index 0000000..2118024
+--- /dev/null
++++ b/TOKEN_AUTH_SYSTEM.md
+@@ -0,0 +1,237 @@
++# Token-Based Authentication System
++
++## 🎯 Problem Solved
++
++**Anonymous users claiming to be authenticated users**: An anonymous user could say "I am user1" but we had no way to verify their identity. This created a security vulnerability where unauthorized users could potentially access authenticated features.
++
++## 🔐 Solution: Session Tokens
++
++After successful authentication, users receive a **temporary session token** that proves their identity for future requests.
++
++### How It Works
++
++1. **User authenticates** → Receives session token
++2. **User provides token** → Server verifies identity  
++3. **Token validation** → Access granted or denied
++
++## 🛠️ Implementation Details
++
++### 1. Token Generation
++```typescript
++function generateSessionToken(): string {
++    return 'mcp_token_' + crypto.randomUUID().replace(/-/g, '') + '_' + Date.now().toString(36);
++}
++```
++
++**Example token**: `mcp_token_a1b2c3d4e5f6789012345678_abc123`
++
++### 2. Token Storage
++```typescript
++interface SessionData {
++    oauth2Client: OAuth2Client;
++    gmail: gmail_v1.Gmail;
++    userId?: string;
++    sessionToken?: string;
++    tokenCreatedAt?: Date;
++}
++
++const sessionStore = new Map<string, SessionData>();
++const tokenToSessionMap = new Map<string, string>(); // Maps tokens to session IDs
++```
++
++### 3. Token Validation
++```typescript
++function validateSessionToken(token: string): { sessionId: string; sessionData: SessionData } | null {
++    // Check if token exists
++    // Verify token matches stored data
++    // Check if token is expired (24 hours)
++    // Return session data or null
++}
++```
++
++## 📝 New Tools Added
++
++### 1. Enhanced `setup_authentication`
++**Now returns a session token:**
++
++```json
++{
++    "name": "setup_authentication",
++    "arguments": {
++        "clientId": "your-client-id",
++        "clientSecret": "your-client-secret",
++        "callbackUrl": "http://localhost:3000/oauth2callback",
++        "userId": "user1"
++    }
++}
++```
++
++**Response:**
++```
++🎉 Authentication successful!
++
++User: user1
++Session: auth-session-123
++Callback URL: http://localhost:3000/oauth2callback
++
++🔑 Your Session Token: mcp_token_a1b2c3d4e5f6789012345678_abc123
++
++⚠️  IMPORTANT: Save this token securely!
++• Use this token to authenticate future requests
++• Add 'sessionToken' parameter to your email requests
++• Token expires in 24 hours
++• Without this token, anonymous users cannot access your account
++```
++
++### 2. New `authenticate_with_token` Tool
++**For quick authentication with existing token:**
++
++```json
++{
++    "name": "authenticate_with_token",
++    "arguments": {
++        "sessionToken": "mcp_token_a1b2c3d4e5f6789012345678_abc123"
++    }
++}
++```
++
++**Response:**
++```
++✅ Token authentication successful!
++
++User: user1
++Session: auth-session-123
++Token valid until: 12/29/2024, 1:30:45 PM
++
++You can now use Gmail tools with this session.
++```
++
++### 3. Enhanced Email Tools
++**All email tools now accept optional `sessionToken` parameter:**
++
++```json
++{
++    "name": "send_email",
++    "arguments": {
++        "to": ["recipient@example.com"],
++        "subject": "Test Email",
++        "body": "Hello from authenticated user!",
++        "sessionToken": "mcp_token_a1b2c3d4e5f6789012345678_abc123"
++    }
++}
++```
++
++## 🔄 Authentication Flows
++
++### Flow 1: Initial Authentication
++```
++1. User → setup_authentication → Server
++2. Server → OAuth flow → Google
++3. Google → User grants access → Server  
++4. Server → Generate token → Return to User
++5. User → Store token securely
++```
++
++### Flow 2: Token-Based Access
++```
++1. User → provide token → Server
++2. Server → validate token → Allow/Deny
++3. If valid → Access granted
++4. If invalid → Authentication required
++```
++
++### Flow 3: Anonymous User Protection
++```
++1. Anonymous → claim identity → Server
++2. Server → request token → Anonymous
++3. Anonymous → no valid token → Server
++4. Server → deny access → Anonymous
++```
++
++## 🔒 Security Features
++
++### 1. Token Expiration
++- **24-hour lifespan** from creation
++- **Automatic cleanup** of expired tokens
++- **Clear expiry notification** to users
++
++### 2. Session Isolation
++- **Each token tied to specific session**
++- **No cross-session token sharing**
++- **Independent authentication required per user**
++
++### 3. Token Validation
++- **Cryptographically secure** token generation
++- **Server-side validation** only
++- **No client-side token manipulation**
++
++## 🧪 Testing Scenarios
++
++### Test 1: Legitimate User
++```
++✅ User authenticates → Gets token
++✅ User provides token → Access granted
++✅ User sends email → Success
++```
++
++### Test 2: Anonymous User
++```
++❌ Anonymous claims identity → No token
++❌ Server requests token → Cannot provide
++❌ Access denied → Security maintained
++```
++
++### Test 3: Token Theft Prevention
++```
++❌ Anonymous uses fake token → Validation fails
++❌ Anonymous uses expired token → Access denied
++❌ Anonymous guesses token → Cryptographically impossible
++```
++
++## 🎯 User Experience
++
++### For Legitimate Users:
++1. **Authenticate once** → Get token
++2. **Save token securely** → Use for 24 hours
++3. **Include token in requests** → Seamless access
++4. **Token expires** → Re-authenticate
++
++### For Anonymous Users:
++1. **Claim identity** → Server asks for proof
++2. **Cannot provide token** → Access denied
++3. **Clear error message** → Explains requirement
++4. **Must authenticate** → No shortcuts
++
++## 🚀 Production Benefits
++
++### Security
++- ✅ **Identity verification** through cryptographic tokens
++- ✅ **No anonymous access** to authenticated features
++- ✅ **Session-based isolation** prevents credential sharing
++- ✅ **Automatic token expiry** limits exposure window
++
++### Usability  
++- ✅ **One-time authentication** for 24-hour access
++- ✅ **Token portability** across different sessions
++- ✅ **Clear error messages** guide users
++- ✅ **Backward compatibility** with session-based auth
++
++### Scalability
++- ✅ **Stateless token validation** 
++- ✅ **Efficient session management**
++- ✅ **Automatic cleanup** of expired data
++- ✅ **Multi-user concurrent access**
++
++## 🎉 Result
++
++**Problem**: Anonymous users could claim any identity without verification
++
++**Solution**: Token-based proof of authentication
++
++**Outcome**: 
++- 🔒 **Secure identity verification**
++- 🚫 **Anonymous access blocked**  
++- ✅ **Legitimate users unaffected**
++- 🛡️ **Production-ready security**
++
++Your Gmail MCP Server now requires cryptographic proof of identity! 🎊
+\ No newline at end of file
+diff --git a/package-lock.json b/package-lock.json
+index ab3a4ae..540df2d 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,16 +1,17 @@
+ {
+   "name": "@gongrzhe/server-gmail-autoauth-mcp",
+-  "version": "1.1.9",
++  "version": "1.1.10",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "@gongrzhe/server-gmail-autoauth-mcp",
+-      "version": "1.1.9",
++      "version": "1.1.10",
+       "license": "ISC",
+       "dependencies": {
+-        "@modelcontextprotocol/sdk": "^0.4.0",
++        "@modelcontextprotocol/sdk": "^1.11.0",
+         "@types/mime-types": "^2.1.4",
++        "express": "^4.18.2",
+         "google-auth-library": "^9.4.1",
+         "googleapis": "^129.0.0",
+         "mcp-evals": "^1.0.18",
+@@ -24,6 +25,7 @@
+         "gmail-mcp": "dist/index.js"
+       },
+       "devDependencies": {
++        "@types/express": "^4.17.21",
+         "@types/node": "^20.10.5",
+         "@types/nodemailer": "^6.4.17",
+         "typescript": "^5.3.3"
+@@ -595,12 +597,228 @@
+       }
+     },
+     "node_modules/@modelcontextprotocol/sdk": {
+-      "version": "0.4.0",
++      "version": "1.13.2",
++      "resolved": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.13.2.tgz",
++      "integrity": "sha512-Vx7qOcmoKkR3qhaQ9qf3GxiVKCEu+zfJddHv6x3dY/9P6+uIwJnmuAur5aB+4FDXf41rRrDnOEGkviX5oYZ67w==",
+       "license": "MIT",
+       "dependencies": {
++        "ajv": "^6.12.6",
+         "content-type": "^1.0.5",
++        "cors": "^2.8.5",
++        "cross-spawn": "^7.0.5",
++        "eventsource": "^3.0.2",
++        "express": "^5.0.1",
++        "express-rate-limit": "^7.5.0",
++        "pkce-challenge": "^5.0.0",
+         "raw-body": "^3.0.0",
+-        "zod": "^3.23.8"
++        "zod": "^3.23.8",
++        "zod-to-json-schema": "^3.24.1"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/accepts": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/accepts/-/accepts-2.0.0.tgz",
++      "integrity": "sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==",
++      "license": "MIT",
++      "dependencies": {
++        "mime-types": "^3.0.0",
++        "negotiator": "^1.0.0"
++      },
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/body-parser": {
++      "version": "2.2.0",
++      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-2.2.0.tgz",
++      "integrity": "sha512-02qvAaxv8tp7fBa/mw1ga98OGm+eCbqzJOKoRt70sLmfEEi+jyBYVTDGfCL/k06/4EMk/z01gCe7HoCH/f2LTg==",
++      "license": "MIT",
++      "dependencies": {
++        "bytes": "^3.1.2",
++        "content-type": "^1.0.5",
++        "debug": "^4.4.0",
++        "http-errors": "^2.0.0",
++        "iconv-lite": "^0.6.3",
++        "on-finished": "^2.4.1",
++        "qs": "^6.14.0",
++        "raw-body": "^3.0.0",
++        "type-is": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/content-disposition": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/content-disposition/-/content-disposition-1.0.0.tgz",
++      "integrity": "sha512-Au9nRL8VNUut/XSzbQA38+M78dzP4D+eqg3gfJHMIHHYa3bg067xj1KxMUWj+VULbiZMowKngFFbKczUrNJ1mg==",
++      "license": "MIT",
++      "dependencies": {
++        "safe-buffer": "5.2.1"
++      },
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/cookie-signature": {
++      "version": "1.2.2",
++      "resolved": "https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.2.2.tgz",
++      "integrity": "sha512-D76uU73ulSXrD1UXF4KE2TMxVVwhsnCgfAyTg9k8P6KGZjlXKrOLe4dJQKI3Bxi5wjesZoFXJWElNWBjPZMbhg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.6.0"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/express": {
++      "version": "5.1.0",
++      "resolved": "https://registry.npmjs.org/express/-/express-5.1.0.tgz",
++      "integrity": "sha512-DT9ck5YIRU+8GYzzU5kT3eHGA5iL+1Zd0EutOmTE9Dtk+Tvuzd23VBU+ec7HPNSTxXYO55gPV/hq4pSBJDjFpA==",
++      "license": "MIT",
++      "dependencies": {
++        "accepts": "^2.0.0",
++        "body-parser": "^2.2.0",
++        "content-disposition": "^1.0.0",
++        "content-type": "^1.0.5",
++        "cookie": "^0.7.1",
++        "cookie-signature": "^1.2.1",
++        "debug": "^4.4.0",
++        "encodeurl": "^2.0.0",
++        "escape-html": "^1.0.3",
++        "etag": "^1.8.1",
++        "finalhandler": "^2.1.0",
++        "fresh": "^2.0.0",
++        "http-errors": "^2.0.0",
++        "merge-descriptors": "^2.0.0",
++        "mime-types": "^3.0.0",
++        "on-finished": "^2.4.1",
++        "once": "^1.4.0",
++        "parseurl": "^1.3.3",
++        "proxy-addr": "^2.0.7",
++        "qs": "^6.14.0",
++        "range-parser": "^1.2.1",
++        "router": "^2.2.0",
++        "send": "^1.1.0",
++        "serve-static": "^2.2.0",
++        "statuses": "^2.0.1",
++        "type-is": "^2.0.1",
++        "vary": "^1.1.2"
++      },
++      "engines": {
++        "node": ">= 18"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/express"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/finalhandler": {
++      "version": "2.1.0",
++      "resolved": "https://registry.npmjs.org/finalhandler/-/finalhandler-2.1.0.tgz",
++      "integrity": "sha512-/t88Ty3d5JWQbWYgaOGCCYfXRwV1+be02WqYYlL6h0lEiUAMPM8o8qKGO01YIkOHzka2up08wvgYD0mDiI+q3Q==",
++      "license": "MIT",
++      "dependencies": {
++        "debug": "^4.4.0",
++        "encodeurl": "^2.0.0",
++        "escape-html": "^1.0.3",
++        "on-finished": "^2.4.1",
++        "parseurl": "^1.3.3",
++        "statuses": "^2.0.1"
++      },
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/fresh": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/fresh/-/fresh-2.0.0.tgz",
++      "integrity": "sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/media-typer": {
++      "version": "1.1.0",
++      "resolved": "https://registry.npmjs.org/media-typer/-/media-typer-1.1.0.tgz",
++      "integrity": "sha512-aisnrDP4GNe06UcKFnV5bfMNPBUw4jsLGaWwWfnH3v02GnBuXX2MCVn5RbrWo0j3pczUilYblq7fQ7Nw2t5XKw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/merge-descriptors": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/merge-descriptors/-/merge-descriptors-2.0.0.tgz",
++      "integrity": "sha512-Snk314V5ayFLhp3fkUREub6WtjBfPdCPY1Ln8/8munuLuiYhsABgBVWsozAG+MWMbVEvcdcpbi9R7ww22l9Q3g==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/sindresorhus"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/negotiator": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/negotiator/-/negotiator-1.0.0.tgz",
++      "integrity": "sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/send": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/send/-/send-1.2.0.tgz",
++      "integrity": "sha512-uaW0WwXKpL9blXE2o0bRhoL2EGXIrZxQ2ZQ4mgcfoBxdFmQold+qWsD2jLrfZ0trjKL6vOw0j//eAwcALFjKSw==",
++      "license": "MIT",
++      "dependencies": {
++        "debug": "^4.3.5",
++        "encodeurl": "^2.0.0",
++        "escape-html": "^1.0.3",
++        "etag": "^1.8.1",
++        "fresh": "^2.0.0",
++        "http-errors": "^2.0.0",
++        "mime-types": "^3.0.1",
++        "ms": "^2.1.3",
++        "on-finished": "^2.4.1",
++        "range-parser": "^1.2.1",
++        "statuses": "^2.0.1"
++      },
++      "engines": {
++        "node": ">= 18"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/serve-static": {
++      "version": "2.2.0",
++      "resolved": "https://registry.npmjs.org/serve-static/-/serve-static-2.2.0.tgz",
++      "integrity": "sha512-61g9pCh0Vnh7IutZjtLGGpTA355+OPn2TyDv/6ivP2h/AdAVX9azsoxmg2/M6nZeQZNYBEwIcsne1mJd9oQItQ==",
++      "license": "MIT",
++      "dependencies": {
++        "encodeurl": "^2.0.0",
++        "escape-html": "^1.0.3",
++        "parseurl": "^1.3.3",
++        "send": "^1.2.0"
++      },
++      "engines": {
++        "node": ">= 18"
++      }
++    },
++    "node_modules/@modelcontextprotocol/sdk/node_modules/type-is": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/type-is/-/type-is-2.0.1.tgz",
++      "integrity": "sha512-OZs6gsjF4vMp32qrCbiVSkrFmXtG/AZhY3t0iAMrMBiAZyV9oALtXO8hsrHbMXF9x6L3grlFuwW2oAz7cav+Gw==",
++      "license": "MIT",
++      "dependencies": {
++        "content-type": "^1.0.5",
++        "media-typer": "^1.1.0",
++        "mime-types": "^3.0.0"
++      },
++      "engines": {
++        "node": ">= 0.6"
+       }
+     },
+     "node_modules/@opentelemetry/api": {
+@@ -612,12 +830,73 @@
+         "node": ">=8.0.0"
+       }
+     },
++    "node_modules/@types/body-parser": {
++      "version": "1.19.6",
++      "resolved": "https://registry.npmjs.org/@types/body-parser/-/body-parser-1.19.6.tgz",
++      "integrity": "sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/connect": "*",
++        "@types/node": "*"
++      }
++    },
++    "node_modules/@types/connect": {
++      "version": "3.4.38",
++      "resolved": "https://registry.npmjs.org/@types/connect/-/connect-3.4.38.tgz",
++      "integrity": "sha512-K6uROf1LD88uDQqJCktA4yzL1YYAK6NgfsI0v/mTgyPKWsX1CnJ0XPSDhViejru1GcRkLWb8RlzFYJRqGUbaug==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/node": "*"
++      }
++    },
+     "node_modules/@types/diff-match-patch": {
+       "version": "1.0.36",
+       "resolved": "https://registry.npmjs.org/@types/diff-match-patch/-/diff-match-patch-1.0.36.tgz",
+       "integrity": "sha512-xFdR6tkm0MWvBfO8xXCSsinYxHcqkQUlcHeSpMC2ukzOb6lwQAfDmW+Qt0AvlGd8HpsS28qKsB+oPeJn9I39jg==",
+       "license": "MIT"
+     },
++    "node_modules/@types/express": {
++      "version": "4.17.23",
++      "resolved": "https://registry.npmjs.org/@types/express/-/express-4.17.23.tgz",
++      "integrity": "sha512-Crp6WY9aTYP3qPi2wGDo9iUe/rceX01UMhnF1jmwDcKCFM6cx7YhGP/Mpr3y9AASpfHixIG0E6azCcL5OcDHsQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/body-parser": "*",
++        "@types/express-serve-static-core": "^4.17.33",
++        "@types/qs": "*",
++        "@types/serve-static": "*"
++      }
++    },
++    "node_modules/@types/express-serve-static-core": {
++      "version": "4.19.6",
++      "resolved": "https://registry.npmjs.org/@types/express-serve-static-core/-/express-serve-static-core-4.19.6.tgz",
++      "integrity": "sha512-N4LZ2xG7DatVqhCZzOGb1Yi5lMbXSZcmdLDe9EzSndPV2HpWYWzRbaerl2n27irrm94EPpprqa8KpskPT085+A==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/node": "*",
++        "@types/qs": "*",
++        "@types/range-parser": "*",
++        "@types/send": "*"
++      }
++    },
++    "node_modules/@types/http-errors": {
++      "version": "2.0.5",
++      "resolved": "https://registry.npmjs.org/@types/http-errors/-/http-errors-2.0.5.tgz",
++      "integrity": "sha512-r8Tayk8HJnX0FztbZN7oVqGccWgw98T/0neJphO91KkmOzug1KkofZURD4UaD5uH8AqcFLfdPErnBod0u71/qg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@types/mime": {
++      "version": "1.3.5",
++      "resolved": "https://registry.npmjs.org/@types/mime/-/mime-1.3.5.tgz",
++      "integrity": "sha512-/pyBZWSLD2n0dcHE3hq8s8ZvcETHtEuF+3E7XVt0Ig2nvsVQXdghHVcEkIWjy9A0wKfTn97a/PSDYohKIlnP/w==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/@types/mime-types": {
+       "version": "2.1.4",
+       "resolved": "https://registry.npmjs.org/@types/mime-types/-/mime-types-2.1.4.tgz",
+@@ -653,6 +932,43 @@
+         "@types/node": "*"
+       }
+     },
++    "node_modules/@types/qs": {
++      "version": "6.14.0",
++      "resolved": "https://registry.npmjs.org/@types/qs/-/qs-6.14.0.tgz",
++      "integrity": "sha512-eOunJqu0K1923aExK6y8p6fsihYEn/BYuQ4g0CxAAgFc4b/ZLN4CrsRZ55srTdqoiLzU2B2evC+apEIxprEzkQ==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@types/range-parser": {
++      "version": "1.2.7",
++      "resolved": "https://registry.npmjs.org/@types/range-parser/-/range-parser-1.2.7.tgz",
++      "integrity": "sha512-hKormJbkJqzQGhziax5PItDUTMAM9uE2XXQmM37dyd4hVM+5aVl7oVxMVUiVQn2oCQFN/LKCZdvSM0pFRqbSmQ==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@types/send": {
++      "version": "0.17.5",
++      "resolved": "https://registry.npmjs.org/@types/send/-/send-0.17.5.tgz",
++      "integrity": "sha512-z6F2D3cOStZvuk2SaP6YrwkNO65iTZcwA2ZkSABegdkAh/lf+Aa/YQndZVfmEXT5vgAp6zv06VQ3ejSVjAny4w==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/mime": "^1",
++        "@types/node": "*"
++      }
++    },
++    "node_modules/@types/serve-static": {
++      "version": "1.15.8",
++      "resolved": "https://registry.npmjs.org/@types/serve-static/-/serve-static-1.15.8.tgz",
++      "integrity": "sha512-roei0UY3LhpOJvjbIP6ZZFngyLKl5dskOtDhxY5THRSpO+ZI+nzJ+m5yUMzGrp89YRa7lvknKkMYjqQFGwA7Sg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/http-errors": "*",
++        "@types/node": "*",
++        "@types/send": "*"
++      }
++    },
+     "node_modules/abort-controller": {
+       "version": "3.0.0",
+       "resolved": "https://registry.npmjs.org/abort-controller/-/abort-controller-3.0.0.tgz",
+@@ -666,13 +982,34 @@
+       }
+     },
+     "node_modules/accepts": {
+-      "version": "2.0.0",
+-      "resolved": "https://registry.npmjs.org/accepts/-/accepts-2.0.0.tgz",
+-      "integrity": "sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==",
++      "version": "1.3.8",
++      "resolved": "https://registry.npmjs.org/accepts/-/accepts-1.3.8.tgz",
++      "integrity": "sha512-PYAthTa2m2VKxuvSD3DPC/Gy+U+sOA1LAuT8mkmRuvw+NACSaeXEQ+NHcVF7rONl6qcaxV3Uuemwawk+7+SJLw==",
+       "license": "MIT",
+       "dependencies": {
+-        "mime-types": "^3.0.0",
+-        "negotiator": "^1.0.0"
++        "mime-types": "~2.1.34",
++        "negotiator": "0.6.3"
++      },
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/accepts/node_modules/mime-db": {
++      "version": "1.52.0",
++      "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
++      "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/accepts/node_modules/mime-types": {
++      "version": "2.1.35",
++      "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
++      "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
++      "license": "MIT",
++      "dependencies": {
++        "mime-db": "1.52.0"
+       },
+       "engines": {
+         "node": ">= 0.6"
+@@ -725,6 +1062,22 @@
+         }
+       }
+     },
++    "node_modules/ajv": {
++      "version": "6.12.6",
++      "resolved": "https://registry.npmjs.org/ajv/-/ajv-6.12.6.tgz",
++      "integrity": "sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==",
++      "license": "MIT",
++      "dependencies": {
++        "fast-deep-equal": "^3.1.1",
++        "fast-json-stable-stringify": "^2.0.0",
++        "json-schema-traverse": "^0.4.1",
++        "uri-js": "^4.2.2"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/epoberezkin"
++      }
++    },
+     "node_modules/ansi-styles": {
+       "version": "4.3.0",
+       "resolved": "https://registry.npmjs.org/ansi-styles/-/ansi-styles-4.3.0.tgz",
+@@ -740,6 +1093,12 @@
+         "url": "https://github.com/chalk/ansi-styles?sponsor=1"
+       }
+     },
++    "node_modules/array-flatten": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/array-flatten/-/array-flatten-1.1.1.tgz",
++      "integrity": "sha512-PCVAQswWemu6UdxsDFFX/+gVeYqKAod3D3UVm91jHwynguOwAvYPhx8nNlM++NqRcK6CxxpUafjmhIdKiHibqg==",
++      "license": "MIT"
++    },
+     "node_modules/asynckit": {
+       "version": "0.4.0",
+       "resolved": "https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz",
+@@ -780,24 +1139,85 @@
+         "node": "*"
+       }
+     },
+-    "node_modules/body-parser": {
+-      "version": "2.2.0",
+-      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-2.2.0.tgz",
+-      "integrity": "sha512-02qvAaxv8tp7fBa/mw1ga98OGm+eCbqzJOKoRt70sLmfEEi+jyBYVTDGfCL/k06/4EMk/z01gCe7HoCH/f2LTg==",
++    "node_modules/body-parser": {
++      "version": "1.20.3",
++      "resolved": "https://registry.npmjs.org/body-parser/-/body-parser-1.20.3.tgz",
++      "integrity": "sha512-7rAxByjUMqQ3/bHJy7D6OGXvx/MMc4IqBn/X0fcM1QUcAItpZrBEYhWGem+tzXH90c+G01ypMcYJBO9Y30203g==",
++      "license": "MIT",
++      "dependencies": {
++        "bytes": "3.1.2",
++        "content-type": "~1.0.5",
++        "debug": "2.6.9",
++        "depd": "2.0.0",
++        "destroy": "1.2.0",
++        "http-errors": "2.0.0",
++        "iconv-lite": "0.4.24",
++        "on-finished": "2.4.1",
++        "qs": "6.13.0",
++        "raw-body": "2.5.2",
++        "type-is": "~1.6.18",
++        "unpipe": "1.0.0"
++      },
++      "engines": {
++        "node": ">= 0.8",
++        "npm": "1.2.8000 || >= 1.4.16"
++      }
++    },
++    "node_modules/body-parser/node_modules/debug": {
++      "version": "2.6.9",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
++      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
++      "license": "MIT",
++      "dependencies": {
++        "ms": "2.0.0"
++      }
++    },
++    "node_modules/body-parser/node_modules/iconv-lite": {
++      "version": "0.4.24",
++      "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.4.24.tgz",
++      "integrity": "sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==",
++      "license": "MIT",
++      "dependencies": {
++        "safer-buffer": ">= 2.1.2 < 3"
++      },
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/body-parser/node_modules/ms": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
++      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
++      "license": "MIT"
++    },
++    "node_modules/body-parser/node_modules/qs": {
++      "version": "6.13.0",
++      "resolved": "https://registry.npmjs.org/qs/-/qs-6.13.0.tgz",
++      "integrity": "sha512-+38qI9SOr8tfZ4QmJNplMUxqjbe7LKvvZgWdExBOmd+egZTtjLB67Gu0HRX3u/XOq7UU2Nx6nsjvS16Z9uwfpg==",
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "side-channel": "^1.0.6"
++      },
++      "engines": {
++        "node": ">=0.6"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
++    "node_modules/body-parser/node_modules/raw-body": {
++      "version": "2.5.2",
++      "resolved": "https://registry.npmjs.org/raw-body/-/raw-body-2.5.2.tgz",
++      "integrity": "sha512-8zGqypfENjCIqGhgXToC8aB2r7YrBX+AQAfIPs/Mlk+BtPTztOvTS01NRW/3Eh60J+a48lt8qsCzirQ6loCVfA==",
+       "license": "MIT",
+       "dependencies": {
+-        "bytes": "^3.1.2",
+-        "content-type": "^1.0.5",
+-        "debug": "^4.4.0",
+-        "http-errors": "^2.0.0",
+-        "iconv-lite": "^0.6.3",
+-        "on-finished": "^2.4.1",
+-        "qs": "^6.14.0",
+-        "raw-body": "^3.0.0",
+-        "type-is": "^2.0.0"
++        "bytes": "3.1.2",
++        "http-errors": "2.0.0",
++        "iconv-lite": "0.4.24",
++        "unpipe": "1.0.0"
+       },
+       "engines": {
+-        "node": ">=18"
++        "node": ">= 0.8"
+       }
+     },
+     "node_modules/buffer-equal-constant-time": {
+@@ -915,9 +1335,9 @@
+       }
+     },
+     "node_modules/content-disposition": {
+-      "version": "1.0.0",
+-      "resolved": "https://registry.npmjs.org/content-disposition/-/content-disposition-1.0.0.tgz",
+-      "integrity": "sha512-Au9nRL8VNUut/XSzbQA38+M78dzP4D+eqg3gfJHMIHHYa3bg067xj1KxMUWj+VULbiZMowKngFFbKczUrNJ1mg==",
++      "version": "0.5.4",
++      "resolved": "https://registry.npmjs.org/content-disposition/-/content-disposition-0.5.4.tgz",
++      "integrity": "sha512-FveZTNuGw04cxlAiWbzi6zTAL/lhehaWbTtgluJh4/E95DqMwTmha3KZN1aAWA8cFIhHzMZUvLevkw5Rqk+tSQ==",
+       "license": "MIT",
+       "dependencies": {
+         "safe-buffer": "5.2.1"
+@@ -936,22 +1356,19 @@
+       }
+     },
+     "node_modules/cookie": {
+-      "version": "0.7.2",
+-      "resolved": "https://registry.npmjs.org/cookie/-/cookie-0.7.2.tgz",
+-      "integrity": "sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==",
++      "version": "0.7.1",
++      "resolved": "https://registry.npmjs.org/cookie/-/cookie-0.7.1.tgz",
++      "integrity": "sha512-6DnInpx7SJ2AK3+CTUE/ZM0vWTUboZCegxhC2xiIydHR9jNuTAASBrfEpHhiGOZw/nX51bHt6YQl8jsGo4y/0w==",
+       "license": "MIT",
+       "engines": {
+         "node": ">= 0.6"
+       }
+     },
+     "node_modules/cookie-signature": {
+-      "version": "1.2.2",
+-      "resolved": "https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.2.2.tgz",
+-      "integrity": "sha512-D76uU73ulSXrD1UXF4KE2TMxVVwhsnCgfAyTg9k8P6KGZjlXKrOLe4dJQKI3Bxi5wjesZoFXJWElNWBjPZMbhg==",
+-      "license": "MIT",
+-      "engines": {
+-        "node": ">=6.6.0"
+-      }
++      "version": "1.0.6",
++      "resolved": "https://registry.npmjs.org/cookie-signature/-/cookie-signature-1.0.6.tgz",
++      "integrity": "sha512-QADzlaHc8icV8I7vbaJXJwod9HWYp8uCqf1xa4OfNu1T7JVxQIrUgOWtHdNDtPiywmFbiS12VjotIXLrKM3orQ==",
++      "license": "MIT"
+     },
+     "node_modules/cors": {
+       "version": "2.8.5",
+@@ -1073,6 +1490,16 @@
+         "node": ">=6"
+       }
+     },
++    "node_modules/destroy": {
++      "version": "1.2.0",
++      "resolved": "https://registry.npmjs.org/destroy/-/destroy-1.2.0.tgz",
++      "integrity": "sha512-2sJGJTaXIIaR1w4iJSNoN0hnMY7Gpc/n8D4qSCJw8QqFWXf7cuAgnEHxBpweaVcPevC2l3KpjYCx3NypQQgaJg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8",
++        "npm": "1.2.8000 || >= 1.4.16"
++      }
++    },
+     "node_modules/diff-match-patch": {
+       "version": "1.0.5",
+       "resolved": "https://registry.npmjs.org/diff-match-patch/-/diff-match-patch-1.0.5.tgz",
+@@ -1270,41 +1697,45 @@
+       }
+     },
+     "node_modules/express": {
+-      "version": "5.1.0",
+-      "resolved": "https://registry.npmjs.org/express/-/express-5.1.0.tgz",
+-      "integrity": "sha512-DT9ck5YIRU+8GYzzU5kT3eHGA5iL+1Zd0EutOmTE9Dtk+Tvuzd23VBU+ec7HPNSTxXYO55gPV/hq4pSBJDjFpA==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "accepts": "^2.0.0",
+-        "body-parser": "^2.2.0",
+-        "content-disposition": "^1.0.0",
+-        "content-type": "^1.0.5",
+-        "cookie": "^0.7.1",
+-        "cookie-signature": "^1.2.1",
+-        "debug": "^4.4.0",
+-        "encodeurl": "^2.0.0",
+-        "escape-html": "^1.0.3",
+-        "etag": "^1.8.1",
+-        "finalhandler": "^2.1.0",
+-        "fresh": "^2.0.0",
+-        "http-errors": "^2.0.0",
+-        "merge-descriptors": "^2.0.0",
+-        "mime-types": "^3.0.0",
+-        "on-finished": "^2.4.1",
+-        "once": "^1.4.0",
+-        "parseurl": "^1.3.3",
+-        "proxy-addr": "^2.0.7",
+-        "qs": "^6.14.0",
+-        "range-parser": "^1.2.1",
+-        "router": "^2.2.0",
+-        "send": "^1.1.0",
+-        "serve-static": "^2.2.0",
+-        "statuses": "^2.0.1",
+-        "type-is": "^2.0.1",
+-        "vary": "^1.1.2"
++      "version": "4.21.2",
++      "resolved": "https://registry.npmjs.org/express/-/express-4.21.2.tgz",
++      "integrity": "sha512-28HqgMZAmih1Czt9ny7qr6ek2qddF4FclbMzwhCREB6OFfH+rXAnuNCwo1/wFvrtbgsQDb4kSbX9de9lFbrXnA==",
++      "license": "MIT",
++      "dependencies": {
++        "accepts": "~1.3.8",
++        "array-flatten": "1.1.1",
++        "body-parser": "1.20.3",
++        "content-disposition": "0.5.4",
++        "content-type": "~1.0.4",
++        "cookie": "0.7.1",
++        "cookie-signature": "1.0.6",
++        "debug": "2.6.9",
++        "depd": "2.0.0",
++        "encodeurl": "~2.0.0",
++        "escape-html": "~1.0.3",
++        "etag": "~1.8.1",
++        "finalhandler": "1.3.1",
++        "fresh": "0.5.2",
++        "http-errors": "2.0.0",
++        "merge-descriptors": "1.0.3",
++        "methods": "~1.1.2",
++        "on-finished": "2.4.1",
++        "parseurl": "~1.3.3",
++        "path-to-regexp": "0.1.12",
++        "proxy-addr": "~2.0.7",
++        "qs": "6.13.0",
++        "range-parser": "~1.2.1",
++        "safe-buffer": "5.2.1",
++        "send": "0.19.0",
++        "serve-static": "1.16.2",
++        "setprototypeof": "1.2.0",
++        "statuses": "2.0.1",
++        "type-is": "~1.6.18",
++        "utils-merge": "1.0.1",
++        "vary": "~1.1.2"
+       },
+       "engines": {
+-        "node": ">= 18"
++        "node": ">= 0.10.0"
+       },
+       "funding": {
+         "type": "opencollective",
+@@ -1326,29 +1757,87 @@
+         "express": "^4.11 || 5 || ^5.0.0-beta.1"
+       }
+     },
++    "node_modules/express/node_modules/debug": {
++      "version": "2.6.9",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
++      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
++      "license": "MIT",
++      "dependencies": {
++        "ms": "2.0.0"
++      }
++    },
++    "node_modules/express/node_modules/ms": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
++      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
++      "license": "MIT"
++    },
++    "node_modules/express/node_modules/qs": {
++      "version": "6.13.0",
++      "resolved": "https://registry.npmjs.org/qs/-/qs-6.13.0.tgz",
++      "integrity": "sha512-+38qI9SOr8tfZ4QmJNplMUxqjbe7LKvvZgWdExBOmd+egZTtjLB67Gu0HRX3u/XOq7UU2Nx6nsjvS16Z9uwfpg==",
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "side-channel": "^1.0.6"
++      },
++      "engines": {
++        "node": ">=0.6"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/ljharb"
++      }
++    },
+     "node_modules/extend": {
+       "version": "3.0.2",
+       "resolved": "https://registry.npmjs.org/extend/-/extend-3.0.2.tgz",
+       "integrity": "sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==",
+       "license": "MIT"
+     },
+-    "node_modules/finalhandler": {
++    "node_modules/fast-deep-equal": {
++      "version": "3.1.3",
++      "resolved": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz",
++      "integrity": "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
++      "license": "MIT"
++    },
++    "node_modules/fast-json-stable-stringify": {
+       "version": "2.1.0",
+-      "resolved": "https://registry.npmjs.org/finalhandler/-/finalhandler-2.1.0.tgz",
+-      "integrity": "sha512-/t88Ty3d5JWQbWYgaOGCCYfXRwV1+be02WqYYlL6h0lEiUAMPM8o8qKGO01YIkOHzka2up08wvgYD0mDiI+q3Q==",
++      "resolved": "https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz",
++      "integrity": "sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==",
++      "license": "MIT"
++    },
++    "node_modules/finalhandler": {
++      "version": "1.3.1",
++      "resolved": "https://registry.npmjs.org/finalhandler/-/finalhandler-1.3.1.tgz",
++      "integrity": "sha512-6BN9trH7bp3qvnrRyzsBz+g3lZxTNZTbVO2EV1CS0WIcDbawYVdYvGflME/9QP0h0pYlCDBCTjYa9nZzMDpyxQ==",
+       "license": "MIT",
+       "dependencies": {
+-        "debug": "^4.4.0",
+-        "encodeurl": "^2.0.0",
+-        "escape-html": "^1.0.3",
+-        "on-finished": "^2.4.1",
+-        "parseurl": "^1.3.3",
+-        "statuses": "^2.0.1"
++        "debug": "2.6.9",
++        "encodeurl": "~2.0.0",
++        "escape-html": "~1.0.3",
++        "on-finished": "2.4.1",
++        "parseurl": "~1.3.3",
++        "statuses": "2.0.1",
++        "unpipe": "~1.0.0"
+       },
+       "engines": {
+         "node": ">= 0.8"
+       }
+     },
++    "node_modules/finalhandler/node_modules/debug": {
++      "version": "2.6.9",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
++      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
++      "license": "MIT",
++      "dependencies": {
++        "ms": "2.0.0"
++      }
++    },
++    "node_modules/finalhandler/node_modules/ms": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
++      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
++      "license": "MIT"
++    },
+     "node_modules/form-data": {
+       "version": "4.0.2",
+       "resolved": "https://registry.npmjs.org/form-data/-/form-data-4.0.2.tgz",
+@@ -1423,12 +1912,12 @@
+       }
+     },
+     "node_modules/fresh": {
+-      "version": "2.0.0",
+-      "resolved": "https://registry.npmjs.org/fresh/-/fresh-2.0.0.tgz",
+-      "integrity": "sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==",
++      "version": "0.5.2",
++      "resolved": "https://registry.npmjs.org/fresh/-/fresh-0.5.2.tgz",
++      "integrity": "sha512-zJ2mQYM18rEFOudeV4GShTGIQ7RbzA7ozbU9I/XBpm7kqgMywgmylMwXHxZJmkVoYkna9d2pVXVXPdYTP9ej8Q==",
+       "license": "MIT",
+       "engines": {
+-        "node": ">= 0.8"
++        "node": ">= 0.6"
+       }
+     },
+     "node_modules/fsevents": {
+@@ -1797,6 +2286,12 @@
+       "integrity": "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==",
+       "license": "(AFL-2.1 OR BSD-3-Clause)"
+     },
++    "node_modules/json-schema-traverse": {
++      "version": "0.4.1",
++      "resolved": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-0.4.1.tgz",
++      "integrity": "sha512-xbbCH5dCYU5T8LcEhhuh7HJ88HXuW3qsI3Y0zOZFKfZEHcpWiHU/Jxzk629Brsab/mMiHQti9wMP+845RPe3Vg==",
++      "license": "MIT"
++    },
+     "node_modules/jsondiffpatch": {
+       "version": "0.6.0",
+       "resolved": "https://registry.npmjs.org/jsondiffpatch/-/jsondiffpatch-0.6.0.tgz",
+@@ -1879,27 +2374,6 @@
+         "react": "^19.1.0"
+       }
+     },
+-    "node_modules/mcp-evals/node_modules/@modelcontextprotocol/sdk": {
+-      "version": "1.11.0",
+-      "resolved": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.11.0.tgz",
+-      "integrity": "sha512-k/1pb70eD638anoi0e8wUGAlbMJXyvdV4p62Ko+EZ7eBe1xMx8Uhak1R5DgfoofsK5IBBnRwsYGTaLZl+6/+RQ==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "content-type": "^1.0.5",
+-        "cors": "^2.8.5",
+-        "cross-spawn": "^7.0.3",
+-        "eventsource": "^3.0.2",
+-        "express": "^5.0.1",
+-        "express-rate-limit": "^7.5.0",
+-        "pkce-challenge": "^5.0.0",
+-        "raw-body": "^3.0.0",
+-        "zod": "^3.23.8",
+-        "zod-to-json-schema": "^3.24.1"
+-      },
+-      "engines": {
+-        "node": ">=18"
+-      }
+-    },
+     "node_modules/md5": {
+       "version": "2.3.0",
+       "resolved": "https://registry.npmjs.org/md5/-/md5-2.3.0.tgz",
+@@ -1912,26 +2386,44 @@
+       }
+     },
+     "node_modules/media-typer": {
+-      "version": "1.1.0",
+-      "resolved": "https://registry.npmjs.org/media-typer/-/media-typer-1.1.0.tgz",
+-      "integrity": "sha512-aisnrDP4GNe06UcKFnV5bfMNPBUw4jsLGaWwWfnH3v02GnBuXX2MCVn5RbrWo0j3pczUilYblq7fQ7Nw2t5XKw==",
++      "version": "0.3.0",
++      "resolved": "https://registry.npmjs.org/media-typer/-/media-typer-0.3.0.tgz",
++      "integrity": "sha512-dq+qelQ9akHpcOl/gUVRTxVIOkAJ1wR3QAvb4RsVjS8oVoFjDGTc679wJYmUmknUF5HwMLOgb5O+a3KxfWapPQ==",
+       "license": "MIT",
+       "engines": {
+-        "node": ">= 0.8"
++        "node": ">= 0.6"
+       }
+     },
+     "node_modules/merge-descriptors": {
+-      "version": "2.0.0",
+-      "resolved": "https://registry.npmjs.org/merge-descriptors/-/merge-descriptors-2.0.0.tgz",
+-      "integrity": "sha512-Snk314V5ayFLhp3fkUREub6WtjBfPdCPY1Ln8/8munuLuiYhsABgBVWsozAG+MWMbVEvcdcpbi9R7ww22l9Q3g==",
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/merge-descriptors/-/merge-descriptors-1.0.3.tgz",
++      "integrity": "sha512-gaNvAS7TZ897/rVaZ0nMtAyxNyi/pdbjbAwUpFQpN70GqnVfOiXpeUUMKRBmzXaSQ8DdTX4/0ms62r2K+hE6mQ==",
+       "license": "MIT",
+-      "engines": {
+-        "node": ">=18"
+-      },
+       "funding": {
+         "url": "https://github.com/sponsors/sindresorhus"
+       }
+     },
++    "node_modules/methods": {
++      "version": "1.1.2",
++      "resolved": "https://registry.npmjs.org/methods/-/methods-1.1.2.tgz",
++      "integrity": "sha512-iclAHeNqNm68zFtnZ0e+1L2yUIdvzNoauKU4WBA3VvH/vPFieF7qfRlwUZU+DA9P9bPXIS90ulxoUoCH23sV2w==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/mime": {
++      "version": "1.6.0",
++      "resolved": "https://registry.npmjs.org/mime/-/mime-1.6.0.tgz",
++      "integrity": "sha512-x0Vn8spI+wuJ1O6S7gnbaQg8Pxh4NNHb7KSINmEWKiPE4RKOplvijn+NkmYmmRgP68mc70j2EbeTFRsrswaQeg==",
++      "license": "MIT",
++      "bin": {
++        "mime": "cli.js"
++      },
++      "engines": {
++        "node": ">=4"
++      }
++    },
+     "node_modules/mime-db": {
+       "version": "1.54.0",
+       "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.54.0.tgz",
+@@ -1978,9 +2470,9 @@
+       }
+     },
+     "node_modules/negotiator": {
+-      "version": "1.0.0",
+-      "resolved": "https://registry.npmjs.org/negotiator/-/negotiator-1.0.0.tgz",
+-      "integrity": "sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==",
++      "version": "0.6.3",
++      "resolved": "https://registry.npmjs.org/negotiator/-/negotiator-0.6.3.tgz",
++      "integrity": "sha512-+EUsqGPLsM+j/zdChZjsnX51g4XrHFOIXwfnCVPGlQk/k5giakcKsuxCObBRu6DSm9opw/O6slWbJdghQM4bBg==",
+       "license": "MIT",
+       "engines": {
+         "node": ">= 0.6"
+@@ -2159,13 +2651,10 @@
+       }
+     },
+     "node_modules/path-to-regexp": {
+-      "version": "8.2.0",
+-      "resolved": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-8.2.0.tgz",
+-      "integrity": "sha512-TdrF7fW9Rphjq4RjrW0Kp2AW0Ahwu9sRGTkS6bvDi0SCwZlEZYmcfDbEsTz8RVk0EHIS/Vd1bv3JhG+1xZuAyQ==",
+-      "license": "MIT",
+-      "engines": {
+-        "node": ">=16"
+-      }
++      "version": "0.1.12",
++      "resolved": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-0.1.12.tgz",
++      "integrity": "sha512-RA1GjUVMnvYFxuqovrEqZoxxW5NUZqbwKtYz/Tt7nXerk0LbLblQmrsgdeOxV5SFHf0UDggjS/bSeOZwt1pmEQ==",
++      "license": "MIT"
+     },
+     "node_modules/pkce-challenge": {
+       "version": "5.0.0",
+@@ -2189,6 +2678,15 @@
+         "node": ">= 0.10"
+       }
+     },
++    "node_modules/punycode": {
++      "version": "2.3.1",
++      "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
++      "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
+     "node_modules/qs": {
+       "version": "6.14.0",
+       "resolved": "https://registry.npmjs.org/qs/-/qs-6.14.0.tgz",
+@@ -2263,6 +2761,15 @@
+         "node": ">= 18"
+       }
+     },
++    "node_modules/router/node_modules/path-to-regexp": {
++      "version": "8.2.0",
++      "resolved": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-8.2.0.tgz",
++      "integrity": "sha512-TdrF7fW9Rphjq4RjrW0Kp2AW0Ahwu9sRGTkS6bvDi0SCwZlEZYmcfDbEsTz8RVk0EHIS/Vd1bv3JhG+1xZuAyQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=16"
++      }
++    },
+     "node_modules/run-applescript": {
+       "version": "7.0.0",
+       "resolved": "https://registry.npmjs.org/run-applescript/-/run-applescript-7.0.0.tgz",
+@@ -2308,40 +2815,66 @@
+       "license": "BSD-3-Clause"
+     },
+     "node_modules/send": {
+-      "version": "1.2.0",
+-      "resolved": "https://registry.npmjs.org/send/-/send-1.2.0.tgz",
+-      "integrity": "sha512-uaW0WwXKpL9blXE2o0bRhoL2EGXIrZxQ2ZQ4mgcfoBxdFmQold+qWsD2jLrfZ0trjKL6vOw0j//eAwcALFjKSw==",
++      "version": "0.19.0",
++      "resolved": "https://registry.npmjs.org/send/-/send-0.19.0.tgz",
++      "integrity": "sha512-dW41u5VfLXu8SJh5bwRmyYUbAoSB3c9uQh6L8h/KtsFREPWpbX1lrljJo186Jc4nmci/sGUZ9a0a0J2zgfq2hw==",
+       "license": "MIT",
+       "dependencies": {
+-        "debug": "^4.3.5",
+-        "encodeurl": "^2.0.0",
+-        "escape-html": "^1.0.3",
+-        "etag": "^1.8.1",
+-        "fresh": "^2.0.0",
+-        "http-errors": "^2.0.0",
+-        "mime-types": "^3.0.1",
+-        "ms": "^2.1.3",
+-        "on-finished": "^2.4.1",
+-        "range-parser": "^1.2.1",
+-        "statuses": "^2.0.1"
++        "debug": "2.6.9",
++        "depd": "2.0.0",
++        "destroy": "1.2.0",
++        "encodeurl": "~1.0.2",
++        "escape-html": "~1.0.3",
++        "etag": "~1.8.1",
++        "fresh": "0.5.2",
++        "http-errors": "2.0.0",
++        "mime": "1.6.0",
++        "ms": "2.1.3",
++        "on-finished": "2.4.1",
++        "range-parser": "~1.2.1",
++        "statuses": "2.0.1"
+       },
+       "engines": {
+-        "node": ">= 18"
++        "node": ">= 0.8.0"
++      }
++    },
++    "node_modules/send/node_modules/debug": {
++      "version": "2.6.9",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-2.6.9.tgz",
++      "integrity": "sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==",
++      "license": "MIT",
++      "dependencies": {
++        "ms": "2.0.0"
++      }
++    },
++    "node_modules/send/node_modules/debug/node_modules/ms": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.0.0.tgz",
++      "integrity": "sha512-Tpp60P6IUJDTuOq/5Z8cdskzJujfwqfOTkrwIwj7IRISpnkJnT6SyJ4PCPnGMoFjC9ddhal5KVIYtAt97ix05A==",
++      "license": "MIT"
++    },
++    "node_modules/send/node_modules/encodeurl": {
++      "version": "1.0.2",
++      "resolved": "https://registry.npmjs.org/encodeurl/-/encodeurl-1.0.2.tgz",
++      "integrity": "sha512-TPJXq8JqFaVYm2CWmPvnP2Iyo4ZSM7/QKcSmuMLDObfpH5fi7RUGmd/rTDf+rut/saiDiQEeVTNgAmJEdAOx0w==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.8"
+       }
+     },
+     "node_modules/serve-static": {
+-      "version": "2.2.0",
+-      "resolved": "https://registry.npmjs.org/serve-static/-/serve-static-2.2.0.tgz",
+-      "integrity": "sha512-61g9pCh0Vnh7IutZjtLGGpTA355+OPn2TyDv/6ivP2h/AdAVX9azsoxmg2/M6nZeQZNYBEwIcsne1mJd9oQItQ==",
++      "version": "1.16.2",
++      "resolved": "https://registry.npmjs.org/serve-static/-/serve-static-1.16.2.tgz",
++      "integrity": "sha512-VqpjJZKadQB/PEbEwvFdO43Ax5dFBZ2UECszz8bQ7pi7wt//PWe1P6MN7eCnjsatYtBT6EuiClbjSWP2WrIoTw==",
+       "license": "MIT",
+       "dependencies": {
+-        "encodeurl": "^2.0.0",
+-        "escape-html": "^1.0.3",
+-        "parseurl": "^1.3.3",
+-        "send": "^1.2.0"
++        "encodeurl": "~2.0.0",
++        "escape-html": "~1.0.3",
++        "parseurl": "~1.3.3",
++        "send": "0.19.0"
+       },
+       "engines": {
+-        "node": ">= 18"
++        "node": ">= 0.8.0"
+       }
+     },
+     "node_modules/setprototypeof": {
+@@ -2533,14 +3066,34 @@
+       }
+     },
+     "node_modules/type-is": {
+-      "version": "2.0.1",
+-      "resolved": "https://registry.npmjs.org/type-is/-/type-is-2.0.1.tgz",
+-      "integrity": "sha512-OZs6gsjF4vMp32qrCbiVSkrFmXtG/AZhY3t0iAMrMBiAZyV9oALtXO8hsrHbMXF9x6L3grlFuwW2oAz7cav+Gw==",
++      "version": "1.6.18",
++      "resolved": "https://registry.npmjs.org/type-is/-/type-is-1.6.18.tgz",
++      "integrity": "sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==",
+       "license": "MIT",
+       "dependencies": {
+-        "content-type": "^1.0.5",
+-        "media-typer": "^1.1.0",
+-        "mime-types": "^3.0.0"
++        "media-typer": "0.3.0",
++        "mime-types": "~2.1.24"
++      },
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/type-is/node_modules/mime-db": {
++      "version": "1.52.0",
++      "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
++      "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.6"
++      }
++    },
++    "node_modules/type-is/node_modules/mime-types": {
++      "version": "2.1.35",
++      "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
++      "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
++      "license": "MIT",
++      "dependencies": {
++        "mime-db": "1.52.0"
+       },
+       "engines": {
+         "node": ">= 0.6"
+@@ -2587,6 +3140,15 @@
+         "node": ">= 0.8"
+       }
+     },
++    "node_modules/uri-js": {
++      "version": "4.4.1",
++      "resolved": "https://registry.npmjs.org/uri-js/-/uri-js-4.4.1.tgz",
++      "integrity": "sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==",
++      "license": "BSD-2-Clause",
++      "dependencies": {
++        "punycode": "^2.1.0"
++      }
++    },
+     "node_modules/url-template": {
+       "version": "2.0.8",
+       "resolved": "https://registry.npmjs.org/url-template/-/url-template-2.0.8.tgz",
+@@ -2602,6 +3164,15 @@
+         "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
+       }
+     },
++    "node_modules/utils-merge": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/utils-merge/-/utils-merge-1.0.1.tgz",
++      "integrity": "sha512-pMZTvIkT1d+TFGvDOqodOclx0QWkkgi6Tdoa8gC8ffGAAqz9pzPTZWAybbsHHoED/ztMtkv/VoYTYyShUn81hA==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 0.4.0"
++      }
++    },
+     "node_modules/uuid": {
+       "version": "9.0.1",
+       "resolved": "https://registry.npmjs.org/uuid/-/uuid-9.0.1.tgz",
+diff --git a/package.json b/package.json
+index fec6a8b..744b43d 100644
+--- a/package.json
++++ b/package.json
+@@ -10,6 +10,8 @@
+   "scripts": {
+     "build": "tsc",
+     "start": "node dist/index.js",
++    "start:http": "node dist/index.js --http",
++    "start:sse": "node dist/index.js --sse",
+     "auth": "node dist/index.js auth",
+     "prepare": "npm run build",
+     "prepublishOnly": "npm run build"
+@@ -46,8 +48,9 @@
+     "node": ">=14.0.0"
+   },
+   "dependencies": {
+-    "@modelcontextprotocol/sdk": "^0.4.0",
++    "@modelcontextprotocol/sdk": "^1.11.0",
+     "@types/mime-types": "^2.1.4",
++    "express": "^4.18.2",
+     "google-auth-library": "^9.4.1",
+     "googleapis": "^129.0.0",
+     "mcp-evals": "^1.0.18",
+@@ -58,6 +61,7 @@
+     "zod-to-json-schema": "^3.22.1"
+   },
+   "devDependencies": {
++    "@types/express": "^4.17.21",
+     "@types/node": "^20.10.5",
+     "@types/nodemailer": "^6.4.17",
+     "typescript": "^5.3.3"
+diff --git a/src/index.ts b/src/index.ts
+index 0abd95b..b33a817 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -2,11 +2,14 @@
+ 
+ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
++import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
++import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+ import {
+     CallToolRequestSchema,
+     ListToolsRequestSchema,
++    isInitializeRequest,
+ } from "@modelcontextprotocol/sdk/types.js";
+-import { google } from 'googleapis';
++import { google, gmail_v1 } from 'googleapis';
+ import { z } from "zod";
+ import { zodToJsonSchema } from "zod-to-json-schema";
+ import { OAuth2Client } from 'google-auth-library';
+@@ -14,17 +17,43 @@ import fs from 'fs';
+ import path from 'path';
+ import { fileURLToPath } from 'url';
+ import http from 'http';
++import express from 'express';
++import { randomUUID } from 'node:crypto';
+ import open from 'open';
+ import os from 'os';
+-import {createEmailMessage, createEmailWithNodemailer} from "./utl.js";
++import crypto from 'crypto';
++import { createEmailMessage, createEmailWithNodemailer } from "./utl.js";
+ import { createLabel, updateLabel, deleteLabel, listLabels, findLabelByName, getOrCreateLabel, GmailLabel } from "./label-manager.js";
++import { AsyncLocalStorage } from 'node:async_hooks';
++
++// Define the shape of the context for each request
++interface AppContext {
++    gmail: gmail_v1.Gmail | null;
++    oauth2Client: OAuth2Client | null;
++    sessionId?: string;
++    userId?: string;
++}
++
++// Create a new AsyncLocalStorage instance with the defined type
++const asyncLocalStorage = new AsyncLocalStorage<AppContext>();
+ 
+ const __dirname = path.dirname(fileURLToPath(import.meta.url));
+ 
+ // Configuration paths
+-const CONFIG_DIR = path.join(os.homedir(), '.gmail-mcp');
+-const OAUTH_PATH = process.env.GMAIL_OAUTH_PATH || path.join(CONFIG_DIR, 'gcp-oauth.keys.json');
+-const CREDENTIALS_PATH = process.env.GMAIL_CREDENTIALS_PATH || path.join(CONFIG_DIR, 'credentials.json');
++let CONFIG_DIR = path.join(os.homedir(), '.gmail-mcp');
++let OAUTH_PATH = process.env.GMAIL_OAUTH_PATH || path.join(CONFIG_DIR, 'gcp-oauth.keys.json');
++let CREDENTIALS_PATH = process.env.GMAIL_CREDENTIALS_PATH || path.join(CONFIG_DIR, 'credentials.json');
++
++// Function to update paths for session-specific storage
++function updatePaths(storagePath: string, sessionId?: string) {
++    if (sessionId) {
++        CONFIG_DIR = path.join(storagePath, sessionId);
++    } else {
++        CONFIG_DIR = storagePath;
++    }
++    OAUTH_PATH = process.env.GMAIL_OAUTH_PATH || path.join(CONFIG_DIR, 'gcp-oauth.keys.json');
++    CREDENTIALS_PATH = process.env.GMAIL_CREDENTIALS_PATH || path.join(CONFIG_DIR, 'credentials.json');
++}
+ 
+ // Type definitions for Gmail API responses
+ interface GmailMessagePart {
+@@ -55,8 +84,8 @@ interface EmailContent {
+     html: string;
+ }
+ 
+-// OAuth2 configuration
+-let oauth2Client: OAuth2Client;
++// Session-based OAuth2 configuration - no global client
++// Store per-session credentials in AsyncLocalStorage
+ 
+ /**
+  * Recursively extract email body content from MIME message parts
+@@ -92,26 +121,30 @@ function extractEmailContent(messagePart: GmailMessagePart): EmailContent {
+     return { text: textContent, html: htmlContent };
+ }
+ 
+-async function loadCredentials() {
++async function loadCredentials(storagePath?: string, sessionId?: string): Promise<OAuth2Client | null> {
++    if (storagePath || sessionId) {
++        updatePaths(storagePath || path.join(os.homedir(), '.gmail-mcp'), sessionId);
++    }
++
+     try {
+         // Create config directory if it doesn't exist
+-        if (!process.env.GMAIL_OAUTH_PATH && !CREDENTIALS_PATH &&!fs.existsSync(CONFIG_DIR)) {
++        if (!fs.existsSync(CONFIG_DIR)) {
+             fs.mkdirSync(CONFIG_DIR, { recursive: true });
+         }
+ 
+         // Check for OAuth keys in current directory first, then in config directory
+         const localOAuthPath = path.join(process.cwd(), 'gcp-oauth.keys.json');
+-        let oauthPath = OAUTH_PATH;
+ 
+-        if (fs.existsSync(localOAuthPath)) {
+-            // If found in current directory, copy to config directory
++        if (fs.existsSync(localOAuthPath) && !fs.existsSync(OAUTH_PATH)) {
++            // If found in current directory and not in config, copy to config directory
+             fs.copyFileSync(localOAuthPath, OAUTH_PATH);
+             console.log('OAuth keys found in current directory, copied to global config.');
+         }
+ 
+         if (!fs.existsSync(OAUTH_PATH)) {
+-            console.error('Error: OAuth keys file not found. Please place gcp-oauth.keys.json in current directory or', CONFIG_DIR);
+-            process.exit(1);
++            // Don't exit if the file doesn't exist, just warn
++            console.warn(`Warning: OAuth keys file not found for session ${sessionId || 'default'}. Please run the setup_authentication tool.`);
++            return null; // Return null instead of undefined
+         }
+ 
+         const keysContent = JSON.parse(fs.readFileSync(OAUTH_PATH, 'utf8'));
+@@ -119,35 +152,50 @@ async function loadCredentials() {
+ 
+         if (!keys) {
+             console.error('Error: Invalid OAuth keys file format. File should contain either "installed" or "web" credentials.');
+-            process.exit(1);
++            return null; // Return null instead of undefined
+         }
+ 
+-        const callback = process.argv[2] === 'auth' && process.argv[3] 
+-        ? process.argv[3] 
+-        : "http://localhost:3000/oauth2callback";
++        // Use the first redirect URI from the stored configuration, or command line override
++        const callback = process.argv[2] === 'auth' && process.argv[3]
++            ? process.argv[3]
++            : (keys.redirect_uris && keys.redirect_uris[0]) || "http://localhost:3456/oauth2callback";
+ 
+-        oauth2Client = new OAuth2Client(
+-            keys.client_id,
+-            keys.client_secret,
+-            callback
+-        );
++        const sessionOauth2Client = new OAuth2Client({
++            clientId: keys.client_id,
++            clientSecret: keys.client_secret,
++            redirectUri: callback
++        });
+ 
+         if (fs.existsSync(CREDENTIALS_PATH)) {
+             const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
+-            oauth2Client.setCredentials(credentials);
++            sessionOauth2Client.setCredentials(credentials);
+         }
++
++        return sessionOauth2Client;
+     } catch (error) {
+         console.error('Error loading credentials:', error);
+-        process.exit(1);
++        return null;
+     }
+ }
+ 
+-async function authenticate() {
++async function authenticate(sessionOauth2Client: OAuth2Client, sessionCredentialsPath: string) {
++    const callbackUrl = (sessionOauth2Client as any).redirectUri || (sessionOauth2Client as any)._opts?.redirectUri;
++    if (!callbackUrl) {
++        throw new Error("OAuth2 Client is not configured with a callback URL.");
++    }
++
++    const parsedUrl = new URL(callbackUrl);
++    const port = parsedUrl.port;
++
++    if (!port) {
++        throw new Error("Callback URL must have a port specified (e.g., http://localhost:3000).");
++    }
++
+     const server = http.createServer();
+-    server.listen(3000);
++    server.listen(parseInt(port, 10), parsedUrl.hostname);
+ 
+     return new Promise<void>((resolve, reject) => {
+-        const authUrl = oauth2Client.generateAuthUrl({
++        const authUrl = sessionOauth2Client.generateAuthUrl({
+             access_type: 'offline',
+             scope: ['https://www.googleapis.com/auth/gmail.modify'],
+         });
+@@ -155,23 +203,38 @@ async function authenticate() {
+         console.log('Please visit this URL to authenticate:', authUrl);
+         open(authUrl);
+ 
++        const timeout = setTimeout(() => {
++            server.close();
++            reject(new Error('Authentication timed out after 5 minutes.'));
++        }, 300000);
++
++        server.on('close', () => {
++            clearTimeout(timeout);
++        });
++
+         server.on('request', async (req, res) => {
+-            if (!req.url?.startsWith('/oauth2callback')) return;
++            // Only handle requests to the specified callback path
++            if (!req.url || !req.url.startsWith(parsedUrl.pathname)) {
++                res.writeHead(404);
++                res.end('Not Found');
++                return;
++            }
+ 
+-            const url = new URL(req.url, 'http://localhost:3000');
++            const url = new URL(req.url, callbackUrl);
+             const code = url.searchParams.get('code');
+ 
+             if (!code) {
+                 res.writeHead(400);
+                 res.end('No code provided');
++                server.close();
+                 reject(new Error('No code provided'));
+                 return;
+             }
+ 
+             try {
+-                const { tokens } = await oauth2Client.getToken(code);
+-                oauth2Client.setCredentials(tokens);
+-                fs.writeFileSync(CREDENTIALS_PATH, JSON.stringify(tokens));
++                const { tokens } = await sessionOauth2Client.getToken(code);
++                sessionOauth2Client.setCredentials(tokens);
++                fs.writeFileSync(sessionCredentialsPath, JSON.stringify(tokens));
+ 
+                 res.writeHead(200);
+                 res.end('Authentication successful! You can close this window.');
+@@ -180,6 +243,7 @@ async function authenticate() {
+             } catch (error) {
+                 res.writeHead(500);
+                 res.end('Authentication failed');
++                server.close();
+                 reject(error);
+             }
+         });
+@@ -198,6 +262,7 @@ const SendEmailSchema = z.object({
+     threadId: z.string().optional().describe("Thread ID to reply to"),
+     inReplyTo: z.string().optional().describe("Message ID being replied to"),
+     attachments: z.array(z.string()).optional().describe("List of file paths to attach to the email"),
++    sessionToken: z.string().optional().describe("Session token to authenticate the request (optional - if not provided, will use session-based auth)"),
+ });
+ 
+ const ReadEmailSchema = z.object({
+@@ -268,30 +333,376 @@ const DownloadAttachmentSchema = z.object({
+     savePath: z.string().optional().describe("Directory path to save the attachment (defaults to current directory)"),
+ });
+ 
++// Schema for authentication setup
++const SetupAuthenticationSchema = z.object({
++    clientId: z.string().describe("Your Google Cloud OAuth Client ID"),
++    clientSecret: z.string().describe("Your Google Cloud OAuth Client Secret"),
++    callbackUrl: z.string().optional().default("http://localhost:3456/oauth2callback").describe("The OAuth2 callback URL. Defaults to http://localhost:3456/oauth2callback"),
++    storagePath: z.string().optional().default(path.join(os.homedir(), '.gmail-mcp')).describe("The directory to store authentication files. Defaults to ~/.gmail-mcp"),
++    userId: z.string().optional().describe("Optional user identifier for multi-user setups. If provided, credentials will be stored separately for this user."),
++}).describe("Sets up and performs authentication with Google Cloud OAuth.");
++
++// Schema for token-based authentication
++const AuthenticateWithTokenSchema = z.object({
++    sessionToken: z.string().describe("Session token received after successful authentication"),
++}).describe("Authenticate using a previously received session token.");
++
++// Session management for multi-user support with token-based authentication
++interface SessionData {
++    oauth2Client: OAuth2Client;
++    gmail: gmail_v1.Gmail;
++    userId?: string;
++    sessionToken?: string;
++    tokenCreatedAt?: Date;
++}
++
++const sessionStore = new Map<string, SessionData>();
++const tokenToSessionMap = new Map<string, string>(); // Maps tokens to session IDs
++
++// Global variable to track current request context (temporary solution)
++let currentRequestContext: { mcpSessionId?: string; authSessionId?: string } = {};
++
++// Helper function to get transport session ID from request context
++function getTransportSessionId(): string | undefined {
++    return currentRequestContext.mcpSessionId;
++}
++
++// Helper function to get or create session ID
++function getCurrentSessionId(): string {
++    const store = asyncLocalStorage.getStore();
++    if (store?.sessionId) {
++        return store.sessionId;
++    }
++
++    // Try to get from current request context
++    if (currentRequestContext.authSessionId) {
++        return currentRequestContext.authSessionId;
++    }
++
++    // Try to get from MCP transport
++    const transportSessionId = getTransportSessionId();
++    if (transportSessionId) {
++        return 'auth-' + transportSessionId;
++    }
++
++    // Generate a new session ID if none exists
++    return 'session-' + Date.now().toString(36) + Math.random().toString(36).substr(2);
++}
++
++// Helper function to get session ID based on client configuration
++function getSessionIdFromConfig(clientId: string, callbackUrl: string): string {
++    // Create a deterministic session ID based on client configuration
++    // This allows the same user with same config to reuse the same session
++    const hash = crypto.createHash('sha256').update(clientId + callbackUrl).digest('hex');
++    return 'user-' + hash.substring(0, 16);
++}
++
++// Helper function to generate a secure session token
++function generateSessionToken(): string {
++    return 'mcp_token_' + crypto.randomUUID().replace(/-/g, '') + '_' + Date.now().toString(36);
++}
++
++// Helper function to store session data with token
++function storeSessionData(sessionId: string, oauth2Client: OAuth2Client, gmail: gmail_v1.Gmail, userId?: string): string {
++    const sessionToken = generateSessionToken();
++    const sessionData: SessionData = {
++        oauth2Client,
++        gmail,
++        userId,
++        sessionToken,
++        tokenCreatedAt: new Date()
++    };
++
++    sessionStore.set(sessionId, sessionData);
++    tokenToSessionMap.set(sessionToken, sessionId);
++
++    console.log(`Stored session data for: ${sessionId} (user: ${userId || 'auto'}) with token: ${sessionToken.substring(0, 20)}...`);
++    return sessionToken;
++}
++
++// Helper function to get session data
++function getSessionData(sessionId: string): SessionData | undefined {
++    const data = sessionStore.get(sessionId);
++    if (data) {
++        console.log(`Retrieved session data for: ${sessionId} (user: ${data.userId || 'auto'})`);
++    }
++    return data;
++}
++
++// Helper function to validate session token
++function validateSessionToken(token: string): { sessionId: string; sessionData: SessionData } | null {
++    const sessionId = tokenToSessionMap.get(token);
++    if (!sessionId) {
++        console.log(`Invalid token provided: ${token.substring(0, 20)}...`);
++        return null;
++    }
++
++    const sessionData = sessionStore.get(sessionId);
++    if (!sessionData || sessionData.sessionToken !== token) {
++        console.log(`Token mismatch for session: ${sessionId}`);
++        return null;
++    }
++
++    // Check if token is expired (24 hours)
++    const tokenAge = Date.now() - (sessionData.tokenCreatedAt?.getTime() || 0);
++    const maxAge = 24 * 60 * 60 * 1000; // 24 hours
++
++    if (tokenAge > maxAge) {
++        console.log(`Token expired for session: ${sessionId}`);
++        // Clean up expired token
++        tokenToSessionMap.delete(token);
++        sessionStore.delete(sessionId);
++        return null;
++    }
++
++    console.log(`Valid token verified for session: ${sessionId} (user: ${sessionData.userId || 'auto'})`);
++    return { sessionId, sessionData };
++}
++
++// Helper function to get session-specific OAuth client
++async function getSessionOAuthClient(sessionId: string): Promise<OAuth2Client | null> {
++    const store = asyncLocalStorage.getStore();
++    if (store?.oauth2Client) {
++        return store.oauth2Client;
++    }
++
++    // Check session store first
++    const sessionData = getSessionData(sessionId);
++    if (sessionData) {
++        return sessionData.oauth2Client;
++    }
++
++    // Try to load credentials for this session
++    return await loadCredentials(undefined, sessionId);
++}
++
++// Proper MCP SDK HTTP/SSE transport implementation
++async function startHttpServer(mcpServer: Server, transportMode: 'http' | 'sse') {
++    const app = express();
++    app.use(express.json());
++
++    console.log(`Starting Gmail MCP Server with ${transportMode.toUpperCase()} transport...`);
++
++    // Store transports for session management
++    const transports = {
++        streamable: {} as Record<string, StreamableHTTPServerTransport>,
++        sse: {} as Record<string, SSEServerTransport>
++    };
++
++    if (transportMode === 'http') {
++        // Modern Streamable HTTP endpoint with proper session management
++        app.all('/mcp', async (req, res) => {
++            try {
++                // Set CORS headers
++                res.header('Access-Control-Allow-Origin', '*');
++                res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
++                res.header('Access-Control-Allow-Headers', 'Content-Type, mcp-session-id');
++
++                const sessionId = req.headers['mcp-session-id'] as string | undefined;
++                let transport: StreamableHTTPServerTransport;
++
++                if (sessionId && transports.streamable[sessionId]) {
++                    // Reuse existing transport
++                    transport = transports.streamable[sessionId];
++                } else if (!sessionId && req.method === 'POST' && isInitializeRequest(req.body)) {
++                    // New initialization request
++                    transport = new StreamableHTTPServerTransport({
++                        sessionIdGenerator: () => randomUUID(),
++                        onsessioninitialized: (sessionId: string) => {
++                            transports.streamable[sessionId] = transport;
++                            console.log(`New session initialized: ${sessionId}`);
++                        }
++                    });
++
++                    // Clean up transport when closed
++                    transport.onclose = () => {
++                        if (transport.sessionId) {
++                            const authSessionId = 'auth-' + transport.sessionId;
++                            // Clean up auth session data
++                            sessionStore.delete(authSessionId);
++                            delete transports.streamable[transport.sessionId];
++                            console.log(`MCP session closed: ${transport.sessionId}, cleaned auth session: ${authSessionId}`);
++                        }
++                    };
++
++                    // Connect the server to the transport
++                    await mcpServer.connect(transport);
++                } else if (req.method === 'POST') {
++                    // POST request without session ID for non-initialize requests
++                    res.status(400).json({
++                        jsonrpc: '2.0',
++                        error: {
++                            code: -32000,
++                            message: 'Bad Request: Session ID required for non-initialize requests',
++                        },
++                        id: req.body.id || null,
++                    });
++                    return;
++                } else {
++                    // Other methods (GET/DELETE) require session ID
++                    if (!sessionId || !transports.streamable[sessionId]) {
++                        res.status(400).send('Invalid or missing session ID');
++                        return;
++                    }
++                    transport = transports.streamable[sessionId];
++                }
++
++                // Set current request context before handling
++                const mcpSessionId = transport.sessionId || sessionId;
++                const authSessionId = 'auth-' + (mcpSessionId || 'default');
++
++                currentRequestContext = { mcpSessionId, authSessionId };
++
++                try {
++                    // Handle the request through the proper MCP transport
++                    await transport.handleRequest(req, res, req.body);
++                } finally {
++                    // Clear request context
++                    currentRequestContext = {};
++                }
++
++            } catch (error: any) {
++                console.error('Error handling Streamable HTTP request:', error);
++                if (!res.headersSent) {
++                    res.status(500).json({
++                        jsonrpc: '2.0',
++                        error: {
++                            code: -32603,
++                            message: 'Internal server error',
++                        },
++                        id: null,
++                    });
++                }
++            }
++        });
++    }
++
++    if (transportMode === 'sse') {
++        // Legacy SSE endpoint for backwards compatibility
++        app.get('/sse', async (req, res) => {
++            try {
++                const transport = new SSEServerTransport('/messages', res);
++                transports.sse[transport.sessionId] = transport;
++
++                res.on("close", () => {
++                    delete transports.sse[transport.sessionId];
++                    console.log(`SSE session closed: ${transport.sessionId}`);
++                });
++
++                await mcpServer.connect(transport);
++                console.log(`SSE session started: ${transport.sessionId}`);
++            } catch (error) {
++                console.error('Error starting SSE transport:', error);
++                res.status(500).send('Failed to start SSE transport');
++            }
++        });
++
++        // Legacy message endpoint for SSE clients
++        app.post('/messages', async (req, res) => {
++            try {
++                const sessionId = req.query.sessionId as string;
++                const transport = transports.sse[sessionId];
++                if (transport) {
++                    await transport.handlePostMessage(req, res, req.body);
++                } else {
++                    res.status(400).send('No transport found for sessionId');
++                }
++            } catch (error) {
++                console.error('Error handling SSE message:', error);
++                res.status(500).send('Error processing message');
++            }
++        });
++    }
++
++    // Handle CORS preflight for all endpoints
++    app.options('*', (req, res) => {
++        res.header('Access-Control-Allow-Origin', '*');
++        res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
++        res.header('Access-Control-Allow-Headers', 'Content-Type, mcp-session-id');
++        res.sendStatus(200);
++    });
++
++    // Health check endpoint
++    app.get('/health', (req, res) => {
++        res.json({
++            status: 'ok',
++            transport: transportMode,
++            timestamp: new Date().toISOString(),
++            version: '1.1.10',
++            activeSessions: {
++                streamable: Object.keys(transports.streamable).length,
++                sse: Object.keys(transports.sse).length
++            }
++        });
++    });
++
++    // API documentation endpoint
++    app.get('/', (req, res) => {
++        res.json({
++            name: 'Gmail MCP Server',
++            version: '1.1.10',
++            transport: transportMode,
++            protocol: transportMode === 'http' ? 'Streamable HTTP (2025-03-26)' : 'SSE (deprecated)',
++            endpoints: transportMode === 'http' ? {
++                mcp: 'ALL /mcp - MCP Streamable HTTP endpoint',
++                health: 'GET /health - Health check'
++            } : {
++                sse: 'GET /sse - SSE connection endpoint',
++                messages: 'POST /messages - Message handling endpoint',
++                health: 'GET /health - Health check'
++            },
++            documentation: 'https://modelcontextprotocol.io/docs'
++        });
++    });
++
++    const port = process.env.PORT || 3000;
++    app.listen(port, () => {
++        console.log(`Gmail MCP Server listening on port ${port}`);
++        console.log(`Transport mode: ${transportMode}`);
++        if (transportMode === 'http') {
++            console.log(`Streamable HTTP endpoint: http://localhost:${port}/mcp`);
++        } else {
++            console.log(`SSE endpoint: http://localhost:${port}/sse`);
++            console.log(`Messages endpoint: http://localhost:${port}/messages`);
++        }
++        console.log(`Health check: http://localhost:${port}/health`);
++        console.log(`Documentation: http://localhost:${port}/`);
++    });
++}
++
+ // Main function
+ async function main() {
+-    await loadCredentials();
++    // No global credential loading needed - will be done per session
+ 
+     if (process.argv[2] === 'auth') {
+-        await authenticate();
++        // For standalone auth, create a temporary session
++        const tempSessionId = 'auth-' + Date.now();
++        const tempOAuthClient = await loadCredentials(undefined, tempSessionId);
++        if (!tempOAuthClient) {
++            console.error('No OAuth configuration found. Please run setup_authentication first.');
++            process.exit(1);
++        }
++
++        updatePaths(path.join(os.homedir(), '.gmail-mcp'), tempSessionId);
++        await authenticate(tempOAuthClient, CREDENTIALS_PATH);
+         console.log('Authentication completed successfully');
+         process.exit(0);
+     }
+ 
+-    // Initialize Gmail API
+-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
++    // No global Gmail API initialization - will be done per session
+ 
+     // Server implementation
+-    const server = new Server({
++    const mcpServer = new Server({
+         name: "gmail",
+         version: "1.0.0",
++    }, {
+         capabilities: {
+             tools: {},
+         },
+     });
+ 
+     // Tool handlers
+-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
++    mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
+         tools: [
+             {
+                 name: "send_email",
+@@ -363,618 +774,861 @@ async function main() {
+                 description: "Downloads an email attachment to a specified location",
+                 inputSchema: zodToJsonSchema(DownloadAttachmentSchema),
+             },
++            {
++                name: "setup_authentication",
++                description: "Sets up and performs authentication with Google Cloud OAuth",
++                inputSchema: zodToJsonSchema(SetupAuthenticationSchema),
++            },
++            {
++                name: "authenticate_with_token",
++                description: "Authenticate using a previously received session token",
++                inputSchema: zodToJsonSchema(AuthenticateWithTokenSchema),
++            },
+         ],
+     }))
+ 
+-    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+-        const { name, arguments: args } = request.params;
+-
+-        async function handleEmailAction(action: "send" | "draft", validatedArgs: any) {
+-            let message: string;
+-            
+-            try {
+-                // Check if we have attachments
+-                if (validatedArgs.attachments && validatedArgs.attachments.length > 0) {
+-                    // Use Nodemailer to create properly formatted RFC822 message
+-                    message = await createEmailWithNodemailer(validatedArgs);
+-                    
+-                    if (action === "send") {
+-                        const encodedMessage = Buffer.from(message).toString('base64')
+-                            .replace(/\+/g, '-')
+-                            .replace(/\//g, '_')
+-                            .replace(/=+$/, '');
+-
+-                        const result = await gmail.users.messages.send({
+-                            userId: 'me',
+-                            requestBody: {
+-                                raw: encodedMessage,
+-                                ...(validatedArgs.threadId && { threadId: validatedArgs.threadId })
+-                            }
+-                        });
+-                        
++    mcpServer.setRequestHandler(CallToolRequestSchema, async (request: any, extra?: any) => {
++        // Get the MCP session ID from current request context
++        // This is the key to proper session isolation
++        const mcpSessionId = currentRequestContext.mcpSessionId || 'default';
++        const authSessionId = currentRequestContext.authSessionId || ('auth-' + mcpSessionId);
++
++        console.log(`Processing request for MCP session: ${mcpSessionId}, Auth session: ${authSessionId}`);
++
++        return asyncLocalStorage.run({ gmail: null, oauth2Client: null, sessionId: authSessionId }, async () => {
++            const { name, arguments: args } = request.params;
++
++            // For all tools except setup_authentication and authenticate_with_token, ensure we have a gmail client
++            if (name !== 'setup_authentication' && name !== 'authenticate_with_token') {
++                const store = asyncLocalStorage.getStore();
++                let sessionOauth2Client: OAuth2Client | null = null;
++                let gmailClient: gmail_v1.Gmail | null = null;
++
++                // Check if request includes a session token
++                const providedToken = args.sessionToken as string | undefined;
++
++                if (providedToken) {
++                    console.log(`Token-based authentication attempted with token: ${providedToken.substring(0, 20)}...`);
++                    const tokenValidation = validateSessionToken(providedToken);
++
++                    if (tokenValidation) {
++                        console.log(`Token validated successfully for session: ${tokenValidation.sessionId}`);
++                        sessionOauth2Client = tokenValidation.sessionData.oauth2Client;
++                        gmailClient = tokenValidation.sessionData.gmail;
++
++                        // Update the store with validated credentials
++                        if (store) {
++                            store.gmail = gmailClient;
++                            store.oauth2Client = sessionOauth2Client;
++                            store.sessionId = tokenValidation.sessionId;
++                            store.userId = tokenValidation.sessionData.userId;
++                        }
++                    } else {
+                         return {
+                             content: [
+                                 {
+                                     type: "text",
+-                                    text: `Email sent successfully with ID: ${result.data.id}`,
++                                    text: `Error: Invalid or expired session token. Please authenticate again using setup_authentication.`,
+                                 },
+                             ],
+                         };
++                    }
++                } else if (!store || !store.gmail) {
++                    // Fall back to session-based authentication
++                    console.log(`No token provided, attempting session-based authentication for: ${authSessionId}`);
++                    const sessionData = getSessionData(authSessionId);
++
++                    if (sessionData) {
++                        console.log(`Found existing auth session: ${authSessionId}`);
++                        sessionOauth2Client = sessionData.oauth2Client;
++                        gmailClient = sessionData.gmail;
+                     } else {
+-                        // For drafts with attachments, use the raw message
++                        console.log(`No existing auth session, loading credentials for: ${authSessionId}`);
++                        // Attempt to load credentials for the current session
++                        sessionOauth2Client = await getSessionOAuthClient(authSessionId);
++
++                        // Do NOT fall back to other users' credentials
++                        // Each session must authenticate independently
++
++                        if (sessionOauth2Client) {
++                            gmailClient = google.gmail({ version: 'v1', auth: sessionOauth2Client });
++                            // Store in session store for future use (generate token)
++                            const sessionToken = storeSessionData(authSessionId, sessionOauth2Client, gmailClient);
++                            console.log(`Generated new session token for existing credentials: ${sessionToken.substring(0, 20)}...`);
++                        }
++                    }
++
++                }
++
++                if (!sessionOauth2Client || !gmailClient) {
++                    return {
++                        content: [
++                            {
++                                type: "text",
++                                text: `Error: No authentication found for session ${authSessionId}. Please authenticate using either:\n1. setup_authentication tool (first time)\n2. authenticate_with_token tool (with your session token)\n\nAnonymous access to other users' credentials is not allowed.`,
++                            },
++                        ],
++                    };
++                }
++
++                // Update the store with the Gmail client (if not already done by token validation)
++                const currentStore = asyncLocalStorage.getStore();
++                if (currentStore && !currentStore.gmail) {
++                    currentStore.gmail = gmailClient;
++                    currentStore.oauth2Client = sessionOauth2Client;
++                    currentStore.sessionId = authSessionId;
++                }
++            }
++
++            const store = asyncLocalStorage.getStore();
++            let gmail = store!.gmail;
++
++            async function handleEmailAction(action: "send" | "draft", validatedArgs: any, gmail: gmail_v1.Gmail) {
++                let message: string;
++
++                try {
++                    // Check if we have attachments
++                    if (validatedArgs.attachments && validatedArgs.attachments.length > 0) {
++                        // Use Nodemailer to create properly formatted RFC822 message
++                        message = await createEmailWithNodemailer(validatedArgs);
++
++                        if (action === "send") {
++                            const encodedMessage = Buffer.from(message).toString('base64')
++                                .replace(/\+/g, '-')
++                                .replace(/\//g, '_')
++                                .replace(/=+$/, '');
++
++                            const result = await gmail.users.messages.send({
++                                userId: 'me',
++                                requestBody: {
++                                    raw: encodedMessage,
++                                    ...(validatedArgs.threadId && { threadId: validatedArgs.threadId })
++                                }
++                            });
++
++                            return {
++                                content: [
++                                    {
++                                        type: "text",
++                                        text: `Email sent successfully with ID: ${result.data.id}`,
++                                    },
++                                ],
++                            };
++                        } else {
++                            // For drafts with attachments, use the raw message
++                            const encodedMessage = Buffer.from(message).toString('base64')
++                                .replace(/\+/g, '-')
++                                .replace(/\//g, '_')
++                                .replace(/=+$/, '');
++
++                            const messageRequest = {
++                                raw: encodedMessage,
++                                ...(validatedArgs.threadId && { threadId: validatedArgs.threadId })
++                            };
++
++                            const response = await gmail.users.drafts.create({
++                                userId: 'me',
++                                requestBody: {
++                                    message: messageRequest,
++                                },
++                            });
++                            return {
++                                content: [
++                                    {
++                                        type: "text",
++                                        text: `Email draft created successfully with ID: ${response.data.id}`,
++                                    },
++                                ],
++                            };
++                        }
++                    } else {
++                        // For emails without attachments, use the existing simple method
++                        message = createEmailMessage(validatedArgs);
++
+                         const encodedMessage = Buffer.from(message).toString('base64')
+                             .replace(/\+/g, '-')
+                             .replace(/\//g, '_')
+                             .replace(/=+$/, '');
+-                        
+-                        const messageRequest = {
++
++                        // Define the type for messageRequest
++                        interface GmailMessageRequest {
++                            raw: string;
++                            threadId?: string;
++                        }
++
++                        const messageRequest: GmailMessageRequest = {
+                             raw: encodedMessage,
+-                            ...(validatedArgs.threadId && { threadId: validatedArgs.threadId })
+                         };
+-                        
+-                        const response = await gmail.users.drafts.create({
++
++                        // Add threadId if specified
++                        if (validatedArgs.threadId) {
++                            messageRequest.threadId = validatedArgs.threadId;
++                        }
++
++                        if (action === "send") {
++                            const response = await gmail.users.messages.send({
++                                userId: 'me',
++                                requestBody: messageRequest,
++                            });
++                            return {
++                                content: [
++                                    {
++                                        type: "text",
++                                        text: `Email sent successfully with ID: ${response.data.id}`,
++                                    },
++                                ],
++                            };
++                        } else {
++                            const response = await gmail.users.drafts.create({
++                                userId: 'me',
++                                requestBody: {
++                                    message: messageRequest,
++                                },
++                            });
++                            return {
++                                content: [
++                                    {
++                                        type: "text",
++                                        text: `Email draft created successfully with ID: ${response.data.id}`,
++                                    },
++                                ],
++                            };
++                        }
++                    }
++                } catch (error: any) {
++                    // Log attachment-related errors for debugging
++                    if (validatedArgs.attachments && validatedArgs.attachments.length > 0) {
++                        console.error(`Failed to send email with ${validatedArgs.attachments.length} attachments:`, error.message);
++                    }
++                    throw error;
++                }
++            }
++
++            // Helper function to process operations in batches
++            async function processBatches<T, U>(
++                items: T[],
++                batchSize: number,
++                processFn: (batch: T[]) => Promise<U[]>
++            ): Promise<{ successes: U[], failures: { item: T, error: Error }[] }> {
++                const successes: U[] = [];
++                const failures: { item: T, error: Error }[] = [];
++
++                // Process in batches
++                for (let i = 0; i < items.length; i += batchSize) {
++                    const batch = items.slice(i, i + batchSize);
++                    try {
++                        const results = await processFn(batch);
++                        successes.push(...results);
++                    } catch (error) {
++                        // If batch fails, try individual items
++                        for (const item of batch) {
++                            try {
++                                const result = await processFn([item]);
++                                successes.push(...result);
++                            } catch (itemError) {
++                                failures.push({ item, error: itemError as Error });
++                            }
++                        }
++                    }
++                }
++
++                return { successes, failures };
++            }
++
++            try {
++                switch (name) {
++                    case "send_email":
++                    case "draft_email": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = SendEmailSchema.parse(args);
++                        const action = name === "send_email" ? "send" : "draft";
++                        return await handleEmailAction(action, validatedArgs, gmail);
++                    }
++
++                    case "read_email": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = ReadEmailSchema.parse(args);
++                        const response = await gmail!.users.messages.get({
+                             userId: 'me',
+-                            requestBody: {
+-                                message: messageRequest,
+-                            },
++                            id: validatedArgs.messageId,
++                            format: 'full',
+                         });
++
++                        const headers = response.data.payload?.headers || [];
++                        const subject = headers.find((h: any) => h.name?.toLowerCase() === 'subject')?.value || '';
++                        const from = headers.find((h: any) => h.name?.toLowerCase() === 'from')?.value || '';
++                        const to = headers.find((h: any) => h.name?.toLowerCase() === 'to')?.value || '';
++                        const date = headers.find((h: any) => h.name?.toLowerCase() === 'date')?.value || '';
++                        const threadId = response.data.threadId || '';
++
++                        // Extract email content using the recursive function
++                        const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
++
++                        // Use plain text content if available, otherwise use HTML content
++                        // (optionally, you could implement HTML-to-text conversion here)
++                        let body = text || html || '';
++
++                        // If we only have HTML content, add a note for the user
++                        const contentTypeNote = !text && html ?
++                            '[Note: This email is HTML-formatted. Plain text version not available.]\n\n' : '';
++
++                        // Get attachment information
++                        const attachments: EmailAttachment[] = [];
++                        const processAttachmentParts = (part: GmailMessagePart, path: string = '') => {
++                            if (part.body && part.body.attachmentId) {
++                                const filename = part.filename || `attachment-${part.body.attachmentId}`;
++                                attachments.push({
++                                    id: part.body.attachmentId,
++                                    filename: filename,
++                                    mimeType: part.mimeType || 'application/octet-stream',
++                                    size: part.body.size || 0
++                                });
++                            }
++
++                            if (part.parts) {
++                                part.parts.forEach((subpart: GmailMessagePart) =>
++                                    processAttachmentParts(subpart, `${path}/parts`)
++                                );
++                            }
++                        };
++
++                        if (response.data.payload) {
++                            processAttachmentParts(response.data.payload as GmailMessagePart);
++                        }
++
++                        // Add attachment info to output if any are present
++                        const attachmentInfo = attachments.length > 0 ?
++                            `\n\nAttachments (${attachments.length}):\n` +
++                            attachments.map(a => `- ${a.filename} (${a.mimeType}, ${Math.round(a.size / 1024)} KB, ID: ${a.id})`).join('\n') : '';
++
+                         return {
+                             content: [
+                                 {
+                                     type: "text",
+-                                    text: `Email draft created successfully with ID: ${response.data.id}`,
++                                    text: `Thread ID: ${threadId}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}\nDate: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`,
+                                 },
+                             ],
+                         };
+                     }
+-                } else {
+-                    // For emails without attachments, use the existing simple method
+-                    message = createEmailMessage(validatedArgs);
+-                    
+-                    const encodedMessage = Buffer.from(message).toString('base64')
+-                        .replace(/\+/g, '-')
+-                        .replace(/\//g, '_')
+-                        .replace(/=+$/, '');
+-
+-                    // Define the type for messageRequest
+-                    interface GmailMessageRequest {
+-                        raw: string;
+-                        threadId?: string;
+-                    }
+ 
+-                    const messageRequest: GmailMessageRequest = {
+-                        raw: encodedMessage,
+-                    };
++                    case "search_emails": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = SearchEmailsSchema.parse(args);
++                        const response = await gmail!.users.messages.list({
++                            userId: 'me',
++                            q: validatedArgs.query,
++                            maxResults: validatedArgs.maxResults || 10,
++                        });
+ 
+-                    // Add threadId if specified
+-                    if (validatedArgs.threadId) {
+-                        messageRequest.threadId = validatedArgs.threadId;
++                        const messages = response.data.messages || [];
++                        const results = await Promise.all(
++                            messages.map(async (msg: any) => {
++                                const detail = await gmail!.users.messages.get({
++                                    userId: 'me',
++                                    id: msg.id!,
++                                    format: 'metadata',
++                                    metadataHeaders: ['Subject', 'From', 'Date'],
++                                });
++                                const headers = detail.data.payload?.headers || [];
++                                return {
++                                    id: msg.id,
++                                    subject: headers.find((h: any) => h.name === 'Subject')?.value || '',
++                                    from: headers.find((h: any) => h.name === 'From')?.value || '',
++                                    date: headers.find((h: any) => h.name === 'Date')?.value || '',
++                                };
++                            })
++                        );
++
++                        return {
++                            content: [
++                                {
++                                    type: "text",
++                                    text: results.map((r: any) =>
++                                        `ID: ${r.id}\nSubject: ${r.subject}\nFrom: ${r.from}\nDate: ${r.date}\n`
++                                    ).join('\n'),
++                                },
++                            ],
++                        };
+                     }
+ 
+-                    if (action === "send") {
+-                        const response = await gmail.users.messages.send({
++                    // Updated implementation for the modify_email handler
++                    case "modify_email": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = ModifyEmailSchema.parse(args);
++
++                        // Prepare request body
++                        const requestBody: any = {};
++
++                        if (validatedArgs.labelIds) {
++                            requestBody.addLabelIds = validatedArgs.labelIds;
++                        }
++
++                        if (validatedArgs.addLabelIds) {
++                            requestBody.addLabelIds = validatedArgs.addLabelIds;
++                        }
++
++                        if (validatedArgs.removeLabelIds) {
++                            requestBody.removeLabelIds = validatedArgs.removeLabelIds;
++                        }
++
++                        await gmail.users.messages.modify({
+                             userId: 'me',
+-                            requestBody: messageRequest,
++                            id: validatedArgs.messageId,
++                            requestBody: requestBody,
+                         });
++
+                         return {
+                             content: [
+                                 {
+                                     type: "text",
+-                                    text: `Email sent successfully with ID: ${response.data.id}`,
++                                    text: `Email ${validatedArgs.messageId} labels updated successfully`,
+                                 },
+                             ],
+                         };
+-                    } else {
+-                        const response = await gmail.users.drafts.create({
++                    }
++
++                    case "delete_email": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = DeleteEmailSchema.parse(args);
++                        await gmail.users.messages.delete({
+                             userId: 'me',
+-                            requestBody: {
+-                                message: messageRequest,
+-                        },
++                            id: validatedArgs.messageId,
+                         });
++
+                         return {
+                             content: [
+                                 {
+                                     type: "text",
+-                                    text: `Email draft created successfully with ID: ${response.data.id}`,
++                                    text: `Email ${validatedArgs.messageId} deleted successfully`,
+                                 },
+                             ],
+                         };
+                     }
+-                }
+-            } catch (error: any) {
+-                // Log attachment-related errors for debugging
+-                if (validatedArgs.attachments && validatedArgs.attachments.length > 0) {
+-                    console.error(`Failed to send email with ${validatedArgs.attachments.length} attachments:`, error.message);
+-                }
+-                throw error;
+-            }
+-        }
+ 
+-        // Helper function to process operations in batches
+-        async function processBatches<T, U>(
+-            items: T[],
+-            batchSize: number,
+-            processFn: (batch: T[]) => Promise<U[]>
+-        ): Promise<{ successes: U[], failures: { item: T, error: Error }[] }> {
+-            const successes: U[] = [];
+-            const failures: { item: T, error: Error }[] = [];
+-            
+-            // Process in batches
+-            for (let i = 0; i < items.length; i += batchSize) {
+-                const batch = items.slice(i, i + batchSize);
+-                try {
+-                    const results = await processFn(batch);
+-                    successes.push(...results);
+-                } catch (error) {
+-                    // If batch fails, try individual items
+-                    for (const item of batch) {
+-                        try {
+-                            const result = await processFn([item]);
+-                            successes.push(...result);
+-                        } catch (itemError) {
+-                            failures.push({ item, error: itemError as Error });
+-                        }
++                    case "list_email_labels": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const labelResults = await listLabels(gmail);
++                        const systemLabels = labelResults.system;
++                        const userLabels = labelResults.user;
++
++                        return {
++                            content: [
++                                {
++                                    type: "text",
++                                    text: `Found ${labelResults.count.total} labels (${labelResults.count.system} system, ${labelResults.count.user} user):\n\n` +
++                                        "System Labels:\n" +
++                                        systemLabels.map((l: GmailLabel) => `ID: ${l.id}\nName: ${l.name}\n`).join('\n') +
++                                        "\nUser Labels:\n" +
++                                        userLabels.map((l: GmailLabel) => `ID: ${l.id}\nName: ${l.name}\n`).join('\n')
++                                },
++                            ],
++                        };
+                     }
+-                }
+-            }
+-            
+-            return { successes, failures };
+-        }
+ 
+-        try {
+-            switch (name) {
+-                case "send_email":
+-                case "draft_email": {
+-                    const validatedArgs = SendEmailSchema.parse(args);
+-                    const action = name === "send_email" ? "send" : "draft";
+-                    return await handleEmailAction(action, validatedArgs);
+-                }
++                    case "batch_modify_emails": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = BatchModifyEmailsSchema.parse(args);
++                        const messageIds = validatedArgs.messageIds;
++                        const batchSize = validatedArgs.batchSize || 50;
+ 
+-                case "read_email": {
+-                    const validatedArgs = ReadEmailSchema.parse(args);
+-                    const response = await gmail.users.messages.get({
+-                        userId: 'me',
+-                        id: validatedArgs.messageId,
+-                        format: 'full',
+-                    });
++                        // Prepare request body
++                        const requestBody: any = {};
+ 
+-                    const headers = response.data.payload?.headers || [];
+-                    const subject = headers.find(h => h.name?.toLowerCase() === 'subject')?.value || '';
+-                    const from = headers.find(h => h.name?.toLowerCase() === 'from')?.value || '';
+-                    const to = headers.find(h => h.name?.toLowerCase() === 'to')?.value || '';
+-                    const date = headers.find(h => h.name?.toLowerCase() === 'date')?.value || '';
+-                    const threadId = response.data.threadId || '';
+-
+-                    // Extract email content using the recursive function
+-                    const { text, html } = extractEmailContent(response.data.payload as GmailMessagePart || {});
+-
+-                    // Use plain text content if available, otherwise use HTML content
+-                    // (optionally, you could implement HTML-to-text conversion here)
+-                    let body = text || html || '';
+-
+-                    // If we only have HTML content, add a note for the user
+-                    const contentTypeNote = !text && html ?
+-                        '[Note: This email is HTML-formatted. Plain text version not available.]\n\n' : '';
+-
+-                    // Get attachment information
+-                    const attachments: EmailAttachment[] = [];
+-                    const processAttachmentParts = (part: GmailMessagePart, path: string = '') => {
+-                        if (part.body && part.body.attachmentId) {
+-                            const filename = part.filename || `attachment-${part.body.attachmentId}`;
+-                            attachments.push({
+-                                id: part.body.attachmentId,
+-                                filename: filename,
+-                                mimeType: part.mimeType || 'application/octet-stream',
+-                                size: part.body.size || 0
+-                            });
++                        if (validatedArgs.addLabelIds) {
++                            requestBody.addLabelIds = validatedArgs.addLabelIds;
+                         }
+ 
+-                        if (part.parts) {
+-                            part.parts.forEach((subpart: GmailMessagePart) =>
+-                                processAttachmentParts(subpart, `${path}/parts`)
+-                            );
++                        if (validatedArgs.removeLabelIds) {
++                            requestBody.removeLabelIds = validatedArgs.removeLabelIds;
+                         }
+-                    };
+ 
+-                    if (response.data.payload) {
+-                        processAttachmentParts(response.data.payload as GmailMessagePart);
+-                    }
++                        // Process messages in batches
++                        const { successes, failures } = await processBatches(
++                            messageIds,
++                            batchSize,
++                            async (batch) => {
++                                const gmailClient = gmail!;
++                                const results = await Promise.all(
++                                    batch.map(async (messageId) => {
++                                        const result = await gmailClient.users.messages.modify({
++                                            userId: 'me',
++                                            id: messageId,
++                                            requestBody: requestBody,
++                                        });
++                                        return { messageId, success: true };
++                                    })
++                                );
++                                return results;
++                            }
++                        );
+ 
+-                    // Add attachment info to output if any are present
+-                    const attachmentInfo = attachments.length > 0 ?
+-                        `\n\nAttachments (${attachments.length}):\n` +
+-                        attachments.map(a => `- ${a.filename} (${a.mimeType}, ${Math.round(a.size/1024)} KB, ID: ${a.id})`).join('\n') : '';
++                        // Generate summary of the operation
++                        const successCount = successes.length;
++                        const failureCount = failures.length;
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: `Thread ID: ${threadId}\nSubject: ${subject}\nFrom: ${from}\nTo: ${to}\nDate: ${date}\n\n${contentTypeNote}${body}${attachmentInfo}`,
+-                            },
+-                        ],
+-                    };
+-                }
++                        let resultText = `Batch label modification complete.\n`;
++                        resultText += `Successfully processed: ${successCount} messages\n`;
+ 
+-                case "search_emails": {
+-                    const validatedArgs = SearchEmailsSchema.parse(args);
+-                    const response = await gmail.users.messages.list({
+-                        userId: 'me',
+-                        q: validatedArgs.query,
+-                        maxResults: validatedArgs.maxResults || 10,
+-                    });
++                        if (failureCount > 0) {
++                            resultText += `Failed to process: ${failureCount} messages\n\n`;
++                            resultText += `Failed message IDs:\n`;
++                            resultText += failures.map(f => `- ${(f.item as string).substring(0, 16)}... (${f.error.message})`).join('\n');
++                        }
+ 
+-                    const messages = response.data.messages || [];
+-                    const results = await Promise.all(
+-                        messages.map(async (msg) => {
+-                            const detail = await gmail.users.messages.get({
+-                                userId: 'me',
+-                                id: msg.id!,
+-                                format: 'metadata',
+-                                metadataHeaders: ['Subject', 'From', 'Date'],
+-                            });
+-                            const headers = detail.data.payload?.headers || [];
+-                            return {
+-                                id: msg.id,
+-                                subject: headers.find(h => h.name === 'Subject')?.value || '',
+-                                from: headers.find(h => h.name === 'From')?.value || '',
+-                                date: headers.find(h => h.name === 'Date')?.value || '',
+-                            };
+-                        })
+-                    );
++                        return {
++                            content: [
++                                {
++                                    type: "text",
++                                    text: resultText,
++                                },
++                            ],
++                        };
++                    }
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: results.map(r =>
+-                                    `ID: ${r.id}\nSubject: ${r.subject}\nFrom: ${r.from}\nDate: ${r.date}\n`
+-                                ).join('\n'),
+-                            },
+-                        ],
+-                    };
+-                }
++                    case "batch_delete_emails": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = BatchDeleteEmailsSchema.parse(args);
++                        const messageIds = validatedArgs.messageIds;
++                        const batchSize = validatedArgs.batchSize || 50;
++
++                        // Process messages in batches
++                        const { successes, failures } = await processBatches(
++                            messageIds,
++                            batchSize,
++                            async (batch) => {
++                                const results = await Promise.all(
++                                    batch.map(async (messageId) => {
++                                        await gmail!.users.messages.delete({
++                                            userId: 'me',
++                                            id: messageId,
++                                        });
++                                        return { messageId, success: true };
++                                    })
++                                );
++                                return results;
++                            }
++                        );
+ 
+-                // Updated implementation for the modify_email handler
+-                case "modify_email": {
+-                    const validatedArgs = ModifyEmailSchema.parse(args);
+-                    
+-                    // Prepare request body
+-                    const requestBody: any = {};
+-                    
+-                    if (validatedArgs.labelIds) {
+-                        requestBody.addLabelIds = validatedArgs.labelIds;
+-                    }
+-                    
+-                    if (validatedArgs.addLabelIds) {
+-                        requestBody.addLabelIds = validatedArgs.addLabelIds;
+-                    }
+-                    
+-                    if (validatedArgs.removeLabelIds) {
+-                        requestBody.removeLabelIds = validatedArgs.removeLabelIds;
++                        // Generate summary of the operation
++                        const successCount = successes.length;
++                        const failureCount = failures.length;
++
++                        let resultText = `Batch delete operation complete.\n`;
++                        resultText += `Successfully deleted: ${successCount} messages\n`;
++
++                        if (failureCount > 0) {
++                            resultText += `Failed to delete: ${failureCount} messages\n\n`;
++                            resultText += `Failed message IDs:\n`;
++                            resultText += failures.map(f => `- ${(f.item as string).substring(0, 16)}... (${f.error.message})`).join('\n');
++                        }
++
++                        return {
++                            content: [
++                                {
++                                    type: "text",
++                                    text: resultText,
++                                },
++                            ],
++                        };
+                     }
+-                    
+-                    await gmail.users.messages.modify({
+-                        userId: 'me',
+-                        id: validatedArgs.messageId,
+-                        requestBody: requestBody,
+-                    });
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: `Email ${validatedArgs.messageId} labels updated successfully`,
+-                            },
+-                        ],
+-                    };
+-                }
++                    // New label management handlers
++                    case "create_label": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = CreateLabelSchema.parse(args);
++                        const result = await createLabel(gmail, validatedArgs.name, {
++                            messageListVisibility: validatedArgs.messageListVisibility,
++                            labelListVisibility: validatedArgs.labelListVisibility,
++                        });
+ 
+-                case "delete_email": {
+-                    const validatedArgs = DeleteEmailSchema.parse(args);
+-                    await gmail.users.messages.delete({
+-                        userId: 'me',
+-                        id: validatedArgs.messageId,
+-                    });
++                        return {
++                            content: [
++                                {
++                                    type: "text",
++                                    text: `Label created successfully:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`,
++                                },
++                            ],
++                        };
++                    }
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: `Email ${validatedArgs.messageId} deleted successfully`,
+-                            },
+-                        ],
+-                    };
+-                }
++                    case "update_label": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = UpdateLabelSchema.parse(args);
+ 
+-                case "list_email_labels": {
+-                    const labelResults = await listLabels(gmail);
+-                    const systemLabels = labelResults.system;
+-                    const userLabels = labelResults.user;
++                        // Prepare request body with only the fields that were provided
++                        const updates: any = {};
++                        if (validatedArgs.name) updates.name = validatedArgs.name;
++                        if (validatedArgs.messageListVisibility) updates.messageListVisibility = validatedArgs.messageListVisibility;
++                        if (validatedArgs.labelListVisibility) updates.labelListVisibility = validatedArgs.labelListVisibility;
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: `Found ${labelResults.count.total} labels (${labelResults.count.system} system, ${labelResults.count.user} user):\n\n` +
+-                                    "System Labels:\n" +
+-                                    systemLabels.map((l: GmailLabel) => `ID: ${l.id}\nName: ${l.name}\n`).join('\n') +
+-                                    "\nUser Labels:\n" +
+-                                    userLabels.map((l: GmailLabel) => `ID: ${l.id}\nName: ${l.name}\n`).join('\n')
+-                            },
+-                        ],
+-                    };
+-                }
++                        const result = await updateLabel(gmail, validatedArgs.id, updates);
+ 
+-                case "batch_modify_emails": {
+-                    const validatedArgs = BatchModifyEmailsSchema.parse(args);
+-                    const messageIds = validatedArgs.messageIds;
+-                    const batchSize = validatedArgs.batchSize || 50;
+-                    
+-                    // Prepare request body
+-                    const requestBody: any = {};
+-                    
+-                    if (validatedArgs.addLabelIds) {
+-                        requestBody.addLabelIds = validatedArgs.addLabelIds;
+-                    }
+-                    
+-                    if (validatedArgs.removeLabelIds) {
+-                        requestBody.removeLabelIds = validatedArgs.removeLabelIds;
++                        return {
++                            content: [
++                                {
++                                    type: "text",
++                                    text: `Label updated successfully:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`,
++                                },
++                            ],
++                        };
+                     }
+ 
+-                    // Process messages in batches
+-                    const { successes, failures } = await processBatches(
+-                        messageIds,
+-                        batchSize,
+-                        async (batch) => {
+-                            const results = await Promise.all(
+-                                batch.map(async (messageId) => {
+-                                    const result = await gmail.users.messages.modify({
+-                                        userId: 'me',
+-                                        id: messageId,
+-                                        requestBody: requestBody,
+-                                    });
+-                                    return { messageId, success: true };
+-                                })
+-                            );
+-                            return results;
+-                        }
+-                    );
+-
+-                    // Generate summary of the operation
+-                    const successCount = successes.length;
+-                    const failureCount = failures.length;
+-                    
+-                    let resultText = `Batch label modification complete.\n`;
+-                    resultText += `Successfully processed: ${successCount} messages\n`;
+-                    
+-                    if (failureCount > 0) {
+-                        resultText += `Failed to process: ${failureCount} messages\n\n`;
+-                        resultText += `Failed message IDs:\n`;
+-                        resultText += failures.map(f => `- ${(f.item as string).substring(0, 16)}... (${f.error.message})`).join('\n');
++                    case "delete_label": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = DeleteLabelSchema.parse(args);
++                        const result = await deleteLabel(gmail, validatedArgs.id);
++
++                        return {
++                            content: [
++                                {
++                                    type: "text",
++                                    text: result.message,
++                                },
++                            ],
++                        };
+                     }
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: resultText,
+-                            },
+-                        ],
+-                    };
+-                }
++                    case "get_or_create_label": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = GetOrCreateLabelSchema.parse(args);
++                        const result = await getOrCreateLabel(gmail, validatedArgs.name, {
++                            messageListVisibility: validatedArgs.messageListVisibility,
++                            labelListVisibility: validatedArgs.labelListVisibility,
++                        });
+ 
+-                case "batch_delete_emails": {
+-                    const validatedArgs = BatchDeleteEmailsSchema.parse(args);
+-                    const messageIds = validatedArgs.messageIds;
+-                    const batchSize = validatedArgs.batchSize || 50;
+-
+-                    // Process messages in batches
+-                    const { successes, failures } = await processBatches(
+-                        messageIds,
+-                        batchSize,
+-                        async (batch) => {
+-                            const results = await Promise.all(
+-                                batch.map(async (messageId) => {
+-                                    await gmail.users.messages.delete({
+-                                        userId: 'me',
+-                                        id: messageId,
+-                                    });
+-                                    return { messageId, success: true };
+-                                })
+-                            );
+-                            return results;
+-                        }
+-                    );
+-
+-                    // Generate summary of the operation
+-                    const successCount = successes.length;
+-                    const failureCount = failures.length;
+-                    
+-                    let resultText = `Batch delete operation complete.\n`;
+-                    resultText += `Successfully deleted: ${successCount} messages\n`;
+-                    
+-                    if (failureCount > 0) {
+-                        resultText += `Failed to delete: ${failureCount} messages\n\n`;
+-                        resultText += `Failed message IDs:\n`;
+-                        resultText += failures.map(f => `- ${(f.item as string).substring(0, 16)}... (${f.error.message})`).join('\n');
++                        const action = result.type === 'user' && result.name === validatedArgs.name ? 'found existing' : 'created new';
++
++                        return {
++                            content: [
++                                {
++                                    type: "text",
++                                    text: `Successfully ${action} label:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`,
++                                },
++                            ],
++                        };
+                     }
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: resultText,
+-                            },
+-                        ],
+-                    };
+-                }
++                    case "download_attachment": {
++                        if (!gmail) throw new Error("Gmail client not initialized.");
++                        const validatedArgs = DownloadAttachmentSchema.parse(args);
+ 
+-                // New label management handlers
+-                case "create_label": {
+-                    const validatedArgs = CreateLabelSchema.parse(args);
+-                    const result = await createLabel(gmail, validatedArgs.name, {
+-                        messageListVisibility: validatedArgs.messageListVisibility,
+-                        labelListVisibility: validatedArgs.labelListVisibility,
+-                    });
++                        try {
++                            // Get the attachment data from Gmail API
++                            const attachmentResponse = await gmail.users.messages.attachments.get({
++                                userId: 'me',
++                                messageId: validatedArgs.messageId,
++                                id: validatedArgs.attachmentId,
++                            });
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: `Label created successfully:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`,
+-                            },
+-                        ],
+-                    };
+-                }
++                            if (!attachmentResponse.data.data) {
++                                throw new Error('No attachment data received');
++                            }
+ 
+-                case "update_label": {
+-                    const validatedArgs = UpdateLabelSchema.parse(args);
+-                    
+-                    // Prepare request body with only the fields that were provided
+-                    const updates: any = {};
+-                    if (validatedArgs.name) updates.name = validatedArgs.name;
+-                    if (validatedArgs.messageListVisibility) updates.messageListVisibility = validatedArgs.messageListVisibility;
+-                    if (validatedArgs.labelListVisibility) updates.labelListVisibility = validatedArgs.labelListVisibility;
+-                    
+-                    const result = await updateLabel(gmail, validatedArgs.id, updates);
++                            // Decode the base64 data
++                            const data = attachmentResponse.data.data;
++                            const buffer = Buffer.from(data, 'base64url');
++
++                            // Determine save path and filename
++                            const savePath = validatedArgs.savePath || process.cwd();
++                            let filename = validatedArgs.filename;
++
++                            if (!filename) {
++                                // Get original filename from message if not provided
++                                const messageResponse = await gmail.users.messages.get({
++                                    userId: 'me',
++                                    id: validatedArgs.messageId,
++                                    format: 'full',
++                                });
++
++                                // Find the attachment part to get original filename
++                                const findAttachment = (part: any): string | null => {
++                                    if (part.body && part.body.attachmentId === validatedArgs.attachmentId) {
++                                        return part.filename || `attachment-${validatedArgs.attachmentId}`;
++                                    }
++                                    if (part.parts) {
++                                        for (const subpart of part.parts) {
++                                            const found = findAttachment(subpart);
++                                            if (found) return found;
++                                        }
++                                    }
++                                    return null;
++                                };
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: `Label updated successfully:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`,
+-                            },
+-                        ],
+-                    };
+-                }
++                                filename = findAttachment(messageResponse.data.payload) || `attachment-${validatedArgs.attachmentId}`;
++                            }
+ 
+-                case "delete_label": {
+-                    const validatedArgs = DeleteLabelSchema.parse(args);
+-                    const result = await deleteLabel(gmail, validatedArgs.id);
++                            // Ensure save directory exists
++                            if (!fs.existsSync(savePath)) {
++                                fs.mkdirSync(savePath, { recursive: true });
++                            }
+ 
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: result.message,
+-                            },
+-                        ],
+-                    };
+-                }
++                            // Write file
++                            const fullPath = path.join(savePath, filename);
++                            fs.writeFileSync(fullPath, buffer);
+ 
+-                case "get_or_create_label": {
+-                    const validatedArgs = GetOrCreateLabelSchema.parse(args);
+-                    const result = await getOrCreateLabel(gmail, validatedArgs.name, {
+-                        messageListVisibility: validatedArgs.messageListVisibility,
+-                        labelListVisibility: validatedArgs.labelListVisibility,
+-                    });
++                            return {
++                                content: [
++                                    {
++                                        type: "text",
++                                        text: `Attachment downloaded successfully:\nFile: ${filename}\nSize: ${buffer.length} bytes\nSaved to: ${fullPath}`,
++                                    },
++                                ],
++                            };
++                        } catch (error: any) {
++                            return {
++                                content: [
++                                    {
++                                        type: "text",
++                                        text: `Failed to download attachment: ${error.message}`,
++                                    },
++                                ],
++                            };
++                        }
++                    }
+ 
+-                    const action = result.type === 'user' && result.name === validatedArgs.name ? 'found existing' : 'created new';
+-                    
+-                    return {
+-                        content: [
+-                            {
+-                                type: "text",
+-                                text: `Successfully ${action} label:\nID: ${result.id}\nName: ${result.name}\nType: ${result.type}`,
++                    case "setup_authentication": {
++                        const validatedArgs = SetupAuthenticationSchema.parse(args);
++                        const store = asyncLocalStorage.getStore();
++
++                        // Use userId if provided, otherwise use the current auth session ID
++                        const userSessionId = validatedArgs.userId || store?.sessionId || authSessionId;
++
++                        console.log(`Setting up authentication for user session: ${userSessionId}`);
++
++                        // Update paths to use user/session-specific storage
++                        updatePaths(validatedArgs.storagePath, userSessionId);
++
++                        // 1. Create the gcp-oauth.keys.json file
++                        const oauthKeys = {
++                            web: {
++                                client_id: validatedArgs.clientId,
++                                client_secret: validatedArgs.clientSecret,
++                                redirect_uris: [validatedArgs.callbackUrl],
++                                auth_uri: "https://accounts.google.com/o/oauth2/auth",
++                                token_uri: "https://oauth2.googleapis.com/token",
++                                auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+                             },
+-                        ],
+-                    };
+-                }
++                        };
+ 
+-                case "download_attachment": {
+-                    const validatedArgs = DownloadAttachmentSchema.parse(args);
+-                    
+-                    try {
+-                        // Get the attachment data from Gmail API
+-                        const attachmentResponse = await gmail.users.messages.attachments.get({
+-                            userId: 'me',
+-                            messageId: validatedArgs.messageId,
+-                            id: validatedArgs.attachmentId,
++                        if (!fs.existsSync(CONFIG_DIR)) {
++                            fs.mkdirSync(CONFIG_DIR, { recursive: true });
++                        }
++
++                        fs.writeFileSync(OAUTH_PATH, JSON.stringify(oauthKeys, null, 2));
++
++                        // 2. Create session-specific oauth2Client
++                        const sessionOauth2Client = new OAuth2Client({
++                            clientId: validatedArgs.clientId,
++                            clientSecret: validatedArgs.clientSecret,
++                            redirectUri: validatedArgs.callbackUrl
+                         });
+ 
+-                        if (!attachmentResponse.data.data) {
+-                            throw new Error('No attachment data received');
+-                        }
++                        // 3. Run the authentication flow
++                        await authenticate(sessionOauth2Client, CREDENTIALS_PATH);
+ 
+-                        // Decode the base64 data
+-                        const data = attachmentResponse.data.data;
+-                        const buffer = Buffer.from(data, 'base64url');
+-
+-                        // Determine save path and filename
+-                        const savePath = validatedArgs.savePath || process.cwd();
+-                        let filename = validatedArgs.filename;
+-                        
+-                        if (!filename) {
+-                            // Get original filename from message if not provided
+-                            const messageResponse = await gmail.users.messages.get({
+-                                userId: 'me',
+-                                id: validatedArgs.messageId,
+-                                format: 'full',
+-                            });
+-                            
+-                            // Find the attachment part to get original filename
+-                            const findAttachment = (part: any): string | null => {
+-                                if (part.body && part.body.attachmentId === validatedArgs.attachmentId) {
+-                                    return part.filename || `attachment-${validatedArgs.attachmentId}`;
+-                                }
+-                                if (part.parts) {
+-                                    for (const subpart of part.parts) {
+-                                        const found = findAttachment(subpart);
+-                                        if (found) return found;
+-                                    }
+-                                }
+-                                return null;
+-                            };
+-                            
+-                            filename = findAttachment(messageResponse.data.payload) || `attachment-${validatedArgs.attachmentId}`;
+-                        }
++                        // 4. Initialize the Gmail API client with the new auth and update the store
++                        const gmail = google.gmail({ version: 'v1', auth: sessionOauth2Client });
+ 
+-                        // Ensure save directory exists
+-                        if (!fs.existsSync(savePath)) {
+-                            fs.mkdirSync(savePath, { recursive: true });
+-                        }
++                        // Store in session store using the auth session ID (which ties to MCP session)
++                        const sessionToken = storeSessionData(authSessionId, sessionOauth2Client, gmail, validatedArgs.userId);
+ 
+-                        // Write file
+-                        const fullPath = path.join(savePath, filename);
+-                        fs.writeFileSync(fullPath, buffer);
++                        if (store) {
++                            store.gmail = gmail;
++                            store.oauth2Client = sessionOauth2Client;
++                            store.sessionId = authSessionId;
++                            store.userId = validatedArgs.userId;
++                        }
+ 
+                         return {
+                             content: [
+                                 {
+                                     type: "text",
+-                                    text: `Attachment downloaded successfully:\nFile: ${filename}\nSize: ${buffer.length} bytes\nSaved to: ${fullPath}`,
++                                    text: `🎉 Authentication successful!\n\n` +
++                                        `User: ${validatedArgs.userId || 'auto-detected'}\n` +
++                                        `Session: ${authSessionId}\n` +
++                                        `Callback URL: ${validatedArgs.callbackUrl}\n\n` +
++                                        `🔑 Your Session Token: ${sessionToken}\n\n` +
++                                        `⚠️  IMPORTANT: Save this token securely!\n` +
++                                        `• Use this token to authenticate future requests\n` +
++                                        `• Add 'sessionToken' parameter to your email requests\n` +
++                                        `• Token expires in 24 hours\n` +
++                                        `• Without this token, anonymous users cannot access your account`,
+                                 },
+                             ],
+                         };
+-                    } catch (error: any) {
++                    }
++
++                    case "authenticate_with_token": {
++                        const validatedArgs = AuthenticateWithTokenSchema.parse(args);
++
++                        const tokenValidation = validateSessionToken(validatedArgs.sessionToken);
++
++                        if (!tokenValidation) {
++                            return {
++                                content: [
++                                    {
++                                        type: "text",
++                                        text: `❌ Authentication failed: Invalid or expired session token.\n\n` +
++                                            `Please use setup_authentication to get a new token.`,
++                                    },
++                                ],
++                            };
++                        }
++
++                        // Update the current session context with validated credentials
++                        const store = asyncLocalStorage.getStore();
++                        if (store && tokenValidation) {
++                            store.gmail = tokenValidation.sessionData.gmail;
++                            store.oauth2Client = tokenValidation.sessionData.oauth2Client;
++                            store.sessionId = tokenValidation.sessionId;
++                            store.userId = tokenValidation.sessionData.userId;
++                        }
++
++                        const expiryDate = tokenValidation.sessionData.tokenCreatedAt
++                            ? new Date(tokenValidation.sessionData.tokenCreatedAt.getTime() + 24 * 60 * 60 * 1000).toLocaleString()
++                            : 'Unknown';
++
+                         return {
+                             content: [
+                                 {
+                                     type: "text",
+-                                    text: `Failed to download attachment: ${error.message}`,
++                                    text: `✅ Token authentication successful!\n\n` +
++                                        `User: ${tokenValidation.sessionData.userId || 'auto-detected'}\n` +
++                                        `Session: ${tokenValidation.sessionId}\n` +
++                                        `Token valid until: ${expiryDate}\n\n` +
++                                        `You can now use Gmail tools with this session.`,
+                                 },
+                             ],
+                         };
+                     }
+-                }
+ 
+-                default:
+-                    throw new Error(`Unknown tool: ${name}`);
++                    default:
++                        throw new Error(`Unknown tool: ${name}`);
++                }
++            } catch (error: any) {
++                return {
++                    content: [
++                        {
++                            type: "text",
++                            text: `Error: ${error.message}`,
++                        },
++                    ],
++                };
+             }
+-        } catch (error: any) {
+-            return {
+-                content: [
+-                    {
+-                        type: "text",
+-                        text: `Error: ${error.message}`,
+-                    },
+-                ],
+-            };
+-        }
++        });
+     });
+-
+-    const transport = new StdioServerTransport();
+-    server.connect(transport);
++    // Determine transport mode from command line arguments
++    const transportMode = process.argv.includes('--http') ? 'http' :
++        process.argv.includes('--sse') ? 'sse' : 'stdio';
++
++    if (transportMode === 'stdio') {
++        // Default stdio transport
++        const transport = new StdioServerTransport();
++        await mcpServer.connect(transport);
++    } else {
++        // HTTP or SSE transport - start Express server
++        await startHttpServer(mcpServer, transportMode as 'http' | 'sse');
++    }
+ }
+ 
+ main().catch((error) => {
+-- 
+2.50.1
+
